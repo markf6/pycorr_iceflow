@@ -53,6 +53,7 @@ parser = argparse.ArgumentParser( \
     makes new version of ice flow nc file - uses del_i and del_j from original to do a constant i,j offset correction, adds divergence layer
     (this removes bilinear warping applied to fit land mask or interior velocity maps used in original processing)
     
+    
     """,
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
@@ -66,6 +67,16 @@ parser.add_argument('-output_dir',
                     type=str, 
                     default=default_outdir,
                     help='output directory for nc, tif and png files [%(default)s]')
+parser.add_argument('-del_i_to_use', 
+                    action='store', 
+                    type=float, 
+                    default = None,
+                    help='use this fixed del_i instead of calculating new one from land mask (requires -del_j_to_use) [%(default)f]')
+parser.add_argument('-del_j_to_use', 
+                    action='store', 
+                    type=float, 
+                    default = None,
+                    help='use this fixed del_j instead of calculating new one from land mask (requires -del_i_to_use) [%(default)f]')
 parser.add_argument('-plt_speed_max', 
                     action='store', 
                     type=float, 
@@ -104,6 +115,14 @@ parser.add_argument('input_nc_file',
                     default=None,
                     help='nc file to process [None]')
 args = parser.parse_args()
+
+if (args.del_i_to_use is None and not(args.del_j_to_use is None)) or ( not(args.del_i_to_use is None) and args.del_j_to_use is None):
+    parser.error("both -del_i_to_use and del_j_to_use must be set if they are to be used.")
+
+if (not(args.del_j_to_use is None) and not(args.del_i_to_use is None)):
+    using_fixed_del_i_del_j = True
+else:
+    using_fixed_del_i_del_j = False
 
 
 
@@ -205,60 +224,65 @@ del_corr_arr = src['del_corr'][:]
 del_i = src['del_i'][:]
 del_j = src['del_j'][:]
 
-if 'lgo_mask' in src.variables.keys():
-    lgo_mask_image_utm = src['lgo_mask'][:]
+if not(using_fixed_del_i_del_j):
+    if 'lgo_mask' in src.variables.keys():
+        lgo_mask_image_utm = src['lgo_mask'][:]
     
-    if True:  # if args.v:
         print(out_nc_file + ': attempting to find offset correction for land (lgo mask) areas')
-    # mask pixels that are not land not(lgo==1)
-    if '_FillValue' in src['lgo_mask'].ncattrs():  # input speed reference has a specified no_data value.
-        lgo_mask_nodata = src['lgo_mask'].getncattr('_FillValue')
-        
-        lgo_masked_d_i_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
-                                         (lgo_mask_image_utm!=1)|(lgo_mask_image_utm==lgo_mask_nodata),del_i)
-        lgo_masked_d_j_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
-                                         (lgo_mask_image_utm!=1)|(lgo_mask_image_utm==lgo_mask_nodata),del_j)
-        lgo_masked_num_possible_pix=np.count_nonzero(np.array((lgo_mask_image_utm==1)&(lgo_mask_image_utm!=lgo_mask_nodata)&(corr_arr!=corr_nodata_val), dtype=np.bool))
-        #             lgo_masked_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
-        lgo_masked_num_valid_pix=np.count_nonzero(np.array(lgo_masked_d_i_m.mask==False, dtype=np.bool))
-    else:   # lgo mask did not include a nodata value (so don't try to use it...)
-        lgo_masked_d_i_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
-                                         (lgo_mask_image_utm!=1),del_i)
-        lgo_masked_d_j_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
-                                         (lgo_mask_image_utm!=1),del_j)
-        lgo_masked_num_possible_pix=np.count_nonzero(np.array((lgo_mask_image_utm==1)&(corr_arr!=corr_nodata_val), dtype=np.bool))
-        #             lgo_masked_num_valid_pix = np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md) & (speedref_vel_vv!=speedref_vv_nodata) & (del_i!=0.0) & (prelim_vv_ma2.mask==False), dtype=np.bool))
-        lgo_masked_num_valid_pix=np.count_nonzero(np.array(lgo_masked_d_i_m.mask==False, dtype=np.bool))
-        
-    if lgo_masked_num_valid_pix>0:
-        lgo_masked_offset_i = -(np.median(lgo_masked_d_i_m.compressed()))
-        lgo_masked_offset_j = -(np.median(lgo_masked_d_j_m.compressed()))
-        lgo_masked_stdev_i = np.std(lgo_masked_d_i_m.compressed())
-        lgo_masked_stdev_j = np.std(lgo_masked_d_j_m.compressed())
-        lgo_masked_offset_available=True
-
-        if True: # args.v:
+        # mask pixels that are not land not(lgo==1)
+        if '_FillValue' in src['lgo_mask'].ncattrs():  # input speed reference has a specified no_data value.
+            lgo_mask_nodata = src['lgo_mask'].getncattr('_FillValue')
+    
+            lgo_masked_d_i_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
+                                             (lgo_mask_image_utm!=1)|(lgo_mask_image_utm==lgo_mask_nodata),del_i)
+            lgo_masked_d_j_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
+                                             (lgo_mask_image_utm!=1)|(lgo_mask_image_utm==lgo_mask_nodata),del_j)
+            lgo_masked_num_possible_pix=np.count_nonzero(np.array((lgo_mask_image_utm==1)&(lgo_mask_image_utm!=lgo_mask_nodata)&(corr_arr!=corr_nodata_val), dtype=np.bool))
+            #             lgo_masked_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
+            lgo_masked_num_valid_pix=np.count_nonzero(np.array(lgo_masked_d_i_m.mask==False, dtype=np.bool))
+        else:   # lgo mask did not include a nodata value (so don't try to use it...)
+            lgo_masked_d_i_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
+                                             (lgo_mask_image_utm!=1),del_i)
+            lgo_masked_d_j_m=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | \
+                                             (lgo_mask_image_utm!=1),del_j)
+            lgo_masked_num_possible_pix=np.count_nonzero(np.array((lgo_mask_image_utm==1)&(corr_arr!=corr_nodata_val), dtype=np.bool))
+            #             lgo_masked_num_valid_pix = np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md) & (speedref_vel_vv!=speedref_vv_nodata) & (del_i!=0.0) & (prelim_vv_ma2.mask==False), dtype=np.bool))
+            lgo_masked_num_valid_pix=np.count_nonzero(np.array(lgo_masked_d_i_m.mask==False, dtype=np.bool))
+    
+        if lgo_masked_num_valid_pix>0:
+            lgo_masked_offset_i = -(np.median(lgo_masked_d_i_m.compressed()))
+            lgo_masked_offset_j = -(np.median(lgo_masked_d_j_m.compressed()))
+            lgo_masked_stdev_i = np.std(lgo_masked_d_i_m.compressed())
+            lgo_masked_stdev_j = np.std(lgo_masked_d_j_m.compressed())
+            lgo_masked_offset_available=True
             print('found lgo_mask (land pixel) offset correction (del_i: {0} del_j: {1} std_i {2} std_j {3}) using {4} pixels out of {5} possible'.format(
                     lgo_masked_offset_i,lgo_masked_offset_j,lgo_masked_stdev_i,lgo_masked_stdev_j,lgo_masked_num_valid_pix,lgo_masked_num_possible_pix))
-else: # no lgo_mask available - how to do offset?                    
-    print('No land/ice/ocean mask available in nc file, exiting...')
-    sys.exit(0)
+
+    else: # no lgo_mask available - how to do offset?                    
+        print('No land/ice/ocean mask available in nc file, and not using fixed (specified) -del_i_to_use and del_j_to_use, SO exiting...')
+        sys.exit(0)
                
-if lgo_masked_offset_available  and \
+if not(using_fixed_del_i_del_j) and \
+        lgo_masked_offset_available  and \
         (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and \
-        ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix) >= \
-        lgo_masked_min_percent_valid_pix_available/100.0) and \
-        (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0) < \
-        max_allowable_pixel_offset_correction):
+        ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix) >= lgo_masked_min_percent_valid_pix_available/100.0) and \
+        (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0) < max_allowable_pixel_offset_correction):
     # use lgo_masked corection
     final_offset_correction_i=lgo_masked_offset_i
     final_offset_correction_j=lgo_masked_offset_j
     found_valid_offset=True
     offset_correction_type_applied='lgo_masked_correction'
     offset_correction_type_descritption='lgo_masked_correction for land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
-else:
-    offset_correction_type_applied='None'
-    offset_correction_type_descritption='None'
+    else:
+        offset_correction_type_applied='None'
+        offset_correction_type_descritption='None'
+else:   # using_fixed_del_i_del_j
+    final_offset_correction_i = args.del_i_to_use
+    final_offset_correction_j = args.del_j_to_use
+    found_valid_offset=True
+    offset_correction_type_applied='specified_del_i_del_j'
+    offset_correction_type_descritption='user specified del_i={} del_j={}'.format(args.del_i_to_use, args.del_j_to_use)
+    
           
 ############################################################################        
 # apply offset correction if there is one
