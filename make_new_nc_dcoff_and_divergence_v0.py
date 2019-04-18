@@ -49,8 +49,11 @@ make_output_prdir = False
 make_log10 = True
 
 parser = argparse.ArgumentParser( \
-    description="""make_new_nc_dcoff_and_divergence.py""",
-    epilog='>>  <<',
+    description="""make_new_nc_dcoff_and_divergence_v0.py input_vel.nc
+    makes new version of ice flow nc file - uses del_i and del_j from original to do a constant i,j offset correction, adds divergence layer
+    (this removes bilinear warping applied to fit land mask or interior velocity maps used in original processing)
+    
+    """,
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
 parser.add_argument('-input_dir', 
