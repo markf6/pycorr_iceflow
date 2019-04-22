@@ -42,8 +42,10 @@ default_indir = '.'
 default_outdir = '.'
 default_speed_max = 15.0
 default_cam = 1.0
-default_dcam = 0.1
-default_cam1 = 0.5
+default_dcam = 0.05
+default_cam1 = 0.1
+
+# -dcam 0.05 -cam 1.0 -cam1 0.0 
 
 make_output_prdir = False
 make_log10 = True
@@ -261,18 +263,23 @@ if not(using_fixed_del_i_del_j):
     else: # no lgo_mask available - how to do offset?                    
         print('No land/ice/ocean mask available in nc file, and not using fixed (specified) -del_i_to_use and del_j_to_use, SO exiting...')
         sys.exit(0)
-               
-if not(using_fixed_del_i_del_j) and \
-        lgo_masked_offset_available  and \
+
+else: # using_fixed_del_i_del_j (still need mask below for new output fields, so read it if it is there)
+    if 'lgo_mask' in src.variables.keys():
+        lgo_mask_image_utm = src['lgo_mask'][:]
+            
+            
+if not(using_fixed_del_i_del_j):
+    if lgo_masked_offset_available  and \
         (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and \
         ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix) >= lgo_masked_min_percent_valid_pix_available/100.0) and \
         (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0) < max_allowable_pixel_offset_correction):
-    # use lgo_masked corection
-    final_offset_correction_i=lgo_masked_offset_i
-    final_offset_correction_j=lgo_masked_offset_j
-    found_valid_offset=True
-    offset_correction_type_applied='lgo_masked_correction'
-    offset_correction_type_descritption='lgo_masked_correction for land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
+        # use lgo_masked corection
+        final_offset_correction_i=lgo_masked_offset_i
+        final_offset_correction_j=lgo_masked_offset_j
+        found_valid_offset=True
+        offset_correction_type_applied='lgo_masked_correction'
+        offset_correction_type_descritption='lgo_masked_correction for land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
     else:
         offset_correction_type_applied='None'
         offset_correction_type_descritption='None'

@@ -1,3 +1,4 @@
+from __future__ import print_function
 import numpy as np
 import scipy
 import os
@@ -33,7 +34,7 @@ args = parser.parse_args()
 with open(args.pycorr_command_file,'r') as pyc_cf:
 	process_list = pyc_cf.read().splitlines()
 
-print 'found %d commands to run'%(len(process_list))
+print('found %d commands to run'%(len(process_list)))
 
 start_time=time.time()
 
@@ -49,7 +50,7 @@ pool = multiprocessing.Pool(num_simultaneous_processes)
 results = []
 r = pool.map_async(process_pair, process_list, callback=results.append)
 r.wait() # Wait on the results
-print results
+print(results)
 
 
-print '%f seconds for %d processes - %f seconds/process'%(time.time()-start_time,len(process_list),(time.time()-start_time)/len(process_list))
+print('%f seconds for %d processes - %f seconds/process'%(time.time()-start_time,len(process_list),(time.time()-start_time)/len(process_list)))
