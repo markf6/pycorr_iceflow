@@ -1,0 +1,1 @@
+conda create --name pycorr numpy matplotlib gdal netCDF4 psutil scipy opencv subprocess ipython jupyter jupyterlab h5py git
