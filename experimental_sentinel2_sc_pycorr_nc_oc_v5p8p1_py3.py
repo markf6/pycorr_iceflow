@@ -1511,8 +1511,8 @@ if args.offset_correction_speedref or args.offset_correction_lgo_mask:
 				full_stationary_masked_stdev_j = np.std(full_stationary_point_mask_masked_d_j_m.compressed())
 				full_stationary_masked_offset_available=True
 
-				print 'found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
-						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix)
+				print('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
+						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix))
 				if not(args.nlf):
 					if full_stationary_masked_num_valid_pix>0:
 						t_log('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
