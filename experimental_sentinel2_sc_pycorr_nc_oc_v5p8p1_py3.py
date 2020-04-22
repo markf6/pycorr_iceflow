@@ -58,97 +58,211 @@ except:
 	psutil_available=False
 	print('psutil not found, proceeding without psutil memory usage reports')
 
-try:
-	import resource
-	resource_available=True
-	print('resource found')
-	def memory_usage_resource():
-		# return the memory usage in MB
-		usage = resource.getrusage(resource.RUSAGE_SELF)
-		return('%7.3f local %7.3f stack %7.3f max memory'%(float(usage.ru_idrss)/float(2 ** 20),float(usage.ru_isrss)/float(2 ** 20),float(usage.ru_maxrss)/float(2 ** 20)))
-except:
-	resource_available=False
-	print('resource package not found, proceeding without resource memory usage reports')
+# try:
+# 	import resource
+# 	resource_available=True
+# 	print('resource found')
+# 	def memory_usage_resource():
+# 		# return the memory usage in MB
+# 		usage = resource.getrusage(resource.RUSAGE_SELF)
+# 		return('%7.3f local %7.3f stack %7.3f max memory'%(float(usage.ru_idrss)/float(2 ** 20),float(usage.ru_isrss)/float(2 ** 20),float(usage.ru_maxrss)/float(2 ** 20)))
+# except:
+# 	resource_available=False
+# 	print('resource package not found, proceeding without resource memory usage reports')
+
+resource_available=False
+
+
+##########################################################################################
+# GeoImg_noload
+###############
+#
+# modified 9/7/2015 for LO8 fname -> date    
+# modified to noload for sc application - don't read image on setup - will read image data in main code to hp filter, delete...and keep memory footprint small
+#
+# modified 7/10/2017 for Collection 1 file names - recognize input filename as C1, parse first yyyyMMDD for acquisition date, set doy field...
+#
+# modified 4/4/2018 GeoImg_noload checks for successful file open, exits with status(0) but prints an error line if open fails
+#
+##########################################################################################
+class GeoImg_noload:  
+    """geocoded image input and info
+        a=GeoImg(in_file_name,indir='.', datestr=None, datefmt='%m/%d/%y')
+            a.img will contain image
+            a.parameter etc...
+            datefmt is datetime format string dt.datetime.strptime()"""
+    
+    # LXSS_LLLL_PPPRRR_YYYYMMDD_yyymmdd_CC_TX, in which:
+    # L = Landsat
+    # X = Sensor
+    # SS = Satellite
+    # PPP = WRS path
+    # RRR = WRS row
+    # YYYYMMDD = Acquisition date
+    # yyyymmdd = Processing date
+    # CC = Collection number
+    # TX = Collection category
+
+    def __init__(self, in_filename,in_dir='.',datestr=None,datefmt='%m/%d/%y'):
+        self.filename = in_filename
+        self.in_dir_path = in_dir  #in_dir can be relative...
+        self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
+        self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
+        if not(self.gd):
+            print('Error: open of %s failed: gdal_error: %s'%(self.in_dir_path + os.path.sep + self.filename, gdal.GetLastErrorMsg()))
+            sys.exit(0)
+        self.nodata_value=self.gd.GetRasterBand(1).GetNoDataValue()
+        self.srs=osr.SpatialReference(wkt=self.gd.GetProjection())
+        self.gt=self.gd.GetGeoTransform()
+        self.proj=self.gd.GetProjection()
+        self.intype=self.gd.GetDriver().ShortName
+        self.min_x=self.gt[0]
+        self.max_x=self.gt[0]+self.gd.RasterXSize*self.gt[1]
+        self.min_y=self.gt[3]+self.gt[5]*self.gd.RasterYSize
+        self.max_y=self.gt[3]
+        self.pix_x_m=self.gt[1]
+        self.pix_y_m=self.gt[5]
+        self.num_pix_x=self.gd.RasterXSize
+        self.num_pix_y=self.gd.RasterYSize
+        self.XYtfm=np.array([self.min_x,self.max_y,self.pix_x_m,self.pix_y_m]).astype('float')
+        if (datestr is not None):   # date specified in GeoImg call directly - could be any GeoTiff...
+            self.imagedatetime=dt.datetime.strptime(datestr,datefmt)
+        elif (self.filename.count('_')>=7 and self.filename[0]=='L'): # looks like collection 1 landsat
+            b=self.filename.split('_')
+            self.sensor=b[0]
+            self.path=int(b[2][0:3])
+            self.row=int(b[2][3:6])
+            self.year=int(b[3][0:4])
+            self.imagedatetime=dt.datetime.strptime(b[3],'%Y%m%d')    
+            self.doy=self.imagedatetime.timetuple().tm_yday        
+        elif ((self.filename.find('LC8') == 0) | (self.filename.find('LO8') == 0) | \
+                (self.filename.find('LE7') == 0) | (self.filename.find('LT5') == 0) | \
+                (self.filename.find('LT4') == 0)):    # looks landsat like (old filenames) - try parsing the date from filename (contains day of year)
+            self.sensor=self.filename[0:3]
+            self.path=int(self.filename[3:6])
+            self.row=int(self.filename[6:9])
+            self.year=int(self.filename[9:13])
+            self.doy=int(self.filename[13:16])
+            self.imagedatetime=dt.datetime.fromordinal(dt.date(self.year-1,12,31).toordinal()+self.doy)
+        elif ( (self.filename.find('S2A') == 0) | (self.filename.find('S2B') == 0) | \
+                ((self.filename.find('T') == 0) & (self.filename.find('_') == 6)) ):	# looks like sentinal 2 data (old or new format) - try parsing the date from filename (contains day of year)
+            if self.filename.find('S2') == 0:  # old format Sentinel 2 data
+                self.sensor=self.filename[0:3]
+                b=re.search('_(?P<date>\d{8})T(?P<time>\d{6})_T(?P<tile>[A-Z0-9]{5})_A(?P<orbit>\d{6})_R(?P<rel_orbit>\d{3})_',self.filename)
+                self.path=np.mod(int(b.group('orbit')),143)+3  # why + 3?  there is an offset between rel_orbit and absolute orbit numbers for S2A
+                self.tile=b.group('tile')
+                self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
+            else:
+                self.sensor='S2'  # would have to get S2A or when it flies S2B from full file path, which I may not maintain
+                b=re.search('T(?P<tile>[A-Z0-9]{5})_(?P<date>\d{8})T(?P<time>\d{6})',self.filename)
+                self.tile=b.group('tile')
+                self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
+        else:
+            self.imagedatetime=None  # need to throw error in this case...or get it from metadata
+        #         self.img=self.gd.ReadAsArray().astype(np.float32)   # works for L8 and earlier - and openCV correlation routine needs float or byte so just use float...
+    def imageij2XY(self,ai,aj,outx=None,outy=None):
+        it = np.nditer([ai,aj,outx,outy],
+                        flags = ['external_loop', 'buffered'],
+                        op_flags = [['readonly'],['readonly'],
+                                    ['writeonly', 'allocate', 'no_broadcast'],
+                                    ['writeonly', 'allocate', 'no_broadcast']])
+        for ii,jj,ox,oy in it:
+            ox[...]=(self.XYtfm[0]+((ii+0.5)*self.XYtfm[2]));
+            oy[...]=(self.XYtfm[1]+((jj+0.5)*self.XYtfm[3]));
+        return np.array(it.operands[2:4])
+    def XY2imageij(self,ax,ay,outi=None,outj=None):
+        it = np.nditer([ax,ay,outi,outj],
+                        flags = ['external_loop', 'buffered'],
+                        op_flags = [['readonly'],['readonly'],
+                                    ['writeonly', 'allocate', 'no_broadcast'],
+                                    ['writeonly', 'allocate', 'no_broadcast']])
+        for xx,yy,oi,oj in it:
+            oi[...]=((xx-self.XYtfm[0])/self.XYtfm[2])-0.5;  # if python arrays started at 1, + 0.5
+            oj[...]=((yy-self.XYtfm[1])/self.XYtfm[3])-0.5;  # " " " " "
+        return np.array(it.operands[2:4])
+#         self.img=self.gd.ReadAsArray().astype(np.uint8)        # L7 and earlier - doesn't work with plt.imshow...
+#         self.img_ov2=self.img[0::2,0::2]
+#         self.img_ov10=self.img[0::10,0::10]
 
 
 
 
-class GeoImg_noload:  	# modified 1/18/2017 for use with Sentinel2 image tiles  
-						# modified 9/7/2015 for LO8 fname -> date    
-						# modified to noload for sc application - don't read image on setup - will read image data in main code to hp filter, delete...and keep memory footprint small
-	"""geocoded image input and info
-		a=GeoImg(in_file_name,indir='.')
-			a.img will contain image
-			a.parameter etc..."""
-	def __init__(self, in_filename,in_dir='.',datestr=None,datefmt='%m/%d/%y'):
-		self.filename = in_filename
-		self.in_dir_path = in_dir  #in_dir can be relative...
-		self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
-		self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
-		self.nodata_value=self.gd.GetRasterBand(1).GetNoDataValue()
-		self.srs=osr.SpatialReference(wkt=self.gd.GetProjection())
-		self.gt=self.gd.GetGeoTransform()
-		self.proj=self.gd.GetProjection()
-		self.intype=self.gd.GetDriver().ShortName
-		self.min_x=self.gt[0]
-		self.max_x=self.gt[0]+self.gd.RasterXSize*self.gt[1]
-		self.min_y=self.gt[3]+self.gt[5]*self.gd.RasterYSize
-		self.max_y=self.gt[3]
-		self.pix_x_m=self.gt[1]
-		self.pix_y_m=self.gt[5]
-		self.num_pix_x=self.gd.RasterXSize
-		self.num_pix_y=self.gd.RasterYSize
-		self.XYtfm=np.array([self.min_x,self.max_y,self.pix_x_m,self.pix_y_m]).astype('float')
-		if (datestr is not None):
-			self.imagedatetime=dt.datetime.strptime(datestr,datefmt)
-		elif ((self.filename.find('LC8') == 0) | (self.filename.find('LO8') == 0) | \
-				(self.filename.find('LE7') == 0) | (self.filename.find('LT5') == 0) | \
-				(self.filename.find('LT4') == 0)):	# looks landsat like - try parsing the date from filename (contains day of year)
-			self.sensor=self.filename[0:3]
-			self.path=int(self.filename[3:6])
-			self.row=int(self.filename[6:9])
-			self.year=int(self.filename[9:13])
-			self.doy=int(self.filename[13:16])
-			self.imagedatetime=dt.datetime.fromordinal(dt.date(self.year-1,12,31).toordinal()+self.doy)
-		elif ( (self.filename.find('S2A') == 0) | (self.filename.find('S2B') == 0) | \
-				((self.filename.find('T') == 0) & (self.filename.find('_') == 6)) ):	# looks like sentinal 2 data (old or new format) - try parsing the date from filename (contains day of year)
-			if self.filename.find('S2') == 0:  # old format Sentinel 2 data
-				self.sensor=self.filename[0:3]
-				b=re.search('_(?P<date>\d{8})T(?P<time>\d{6})_T(?P<tile>[A-Z0-9]{5})_A(?P<orbit>\d{6})_R(?P<rel_orbit>\d{3})_',self.filename)
-				self.path=np.mod(int(b.group('orbit')),143)+3  # why + 3?  there is an offset between rel_orbit and absolute orbit numbers for S2A
-				self.tile=b.group('tile')
-				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
-			else:
-				self.sensor='S2'  # would have to get S2A or when it flies S2B from full file path, which I may not maintain
-				b=re.search('T(?P<tile>[A-Z0-9]{5})_(?P<date>\d{8})T(?P<time>\d{6})',self.filename)
-				self.tile=b.group('tile')
-				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
-		else:
-			self.imagedatetime=None  # need to throw error in this case...or get it from metadata
-# 		self.img=self.gd.ReadAsArray().astype(np.float32)   # works for L8 and earlier - and openCV correlation routine needs float or byte so just use float...
-	def imageij2XY(self,ai,aj,outx=None,outy=None):
-		it = np.nditer([ai,aj,outx,outy],
-						flags = ['external_loop', 'buffered'],
-						op_flags = [['readonly'],['readonly'],
-									['writeonly', 'allocate', 'no_broadcast'],
-									['writeonly', 'allocate', 'no_broadcast']])
-		for ii,jj,ox,oy in it:
-			ox[...]=(self.XYtfm[0]+((ii+0.5)*self.XYtfm[2]));
-			oy[...]=(self.XYtfm[1]+((jj+0.5)*self.XYtfm[3]));
-		return np.array(it.operands[2:4])
-	def XY2imageij(self,ax,ay,outi=None,outj=None):
-		it = np.nditer([ax,ay,outi,outj],
-						flags = ['external_loop', 'buffered'],
-						op_flags = [['readonly'],['readonly'],
-									['writeonly', 'allocate', 'no_broadcast'],
-									['writeonly', 'allocate', 'no_broadcast']])
-		for xx,yy,oi,oj in it:
-			oi[...]=((xx-self.XYtfm[0])/self.XYtfm[2])-0.5;  # if python arrays started at 1, + 0.5
-			oj[...]=((yy-self.XYtfm[1])/self.XYtfm[3])-0.5;  # " " " " "
-		return np.array(it.operands[2:4])
-# 		self.img=self.gd.ReadAsArray().astype(np.uint8)		# L7 and earlier - doesn't work with plt.imshow...
-# 		self.img_ov2=self.img[0::2,0::2]
-# 		self.img_ov10=self.img[0::10,0::10]
+# class GeoImg_noload:  	# modified 1/18/2017 for use with Sentinel2 image tiles  
+# 						# modified 9/7/2015 for LO8 fname -> date    
+# 						# modified to noload for sc application - don't read image on setup - will read image data in main code to hp filter, delete...and keep memory footprint small
+# 	"""geocoded image input and info
+# 		a=GeoImg(in_file_name,indir='.')
+# 			a.img will contain image
+# 			a.parameter etc..."""
+# 	def __init__(self, in_filename,in_dir='.',datestr=None,datefmt='%m/%d/%y'):
+# 		self.filename = in_filename
+# 		self.in_dir_path = in_dir  #in_dir can be relative...
+# 		self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
+# 		self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
+# 		self.nodata_value=self.gd.GetRasterBand(1).GetNoDataValue()
+# 		self.srs=osr.SpatialReference(wkt=self.gd.GetProjection())
+# 		self.gt=self.gd.GetGeoTransform()
+# 		self.proj=self.gd.GetProjection()
+# 		self.intype=self.gd.GetDriver().ShortName
+# 		self.min_x=self.gt[0]
+# 		self.max_x=self.gt[0]+self.gd.RasterXSize*self.gt[1]
+# 		self.min_y=self.gt[3]+self.gt[5]*self.gd.RasterYSize
+# 		self.max_y=self.gt[3]
+# 		self.pix_x_m=self.gt[1]
+# 		self.pix_y_m=self.gt[5]
+# 		self.num_pix_x=self.gd.RasterXSize
+# 		self.num_pix_y=self.gd.RasterYSize
+# 		self.XYtfm=np.array([self.min_x,self.max_y,self.pix_x_m,self.pix_y_m]).astype('float')
+# 		if (datestr is not None):
+# 			self.imagedatetime=dt.datetime.strptime(datestr,datefmt)
+# 		elif ((self.filename.find('LC8') == 0) | (self.filename.find('LO8') == 0) | \
+# 				(self.filename.find('LE7') == 0) | (self.filename.find('LT5') == 0) | \
+# 				(self.filename.find('LT4') == 0)):	# looks landsat like - try parsing the date from filename (contains day of year)
+# 			self.sensor=self.filename[0:3]
+# 			self.path=int(self.filename[3:6])
+# 			self.row=int(self.filename[6:9])
+# 			self.year=int(self.filename[9:13])
+# 			self.doy=int(self.filename[13:16])
+# 			self.imagedatetime=dt.datetime.fromordinal(dt.date(self.year-1,12,31).toordinal()+self.doy)
+# 		elif ( (self.filename.find('S2A') == 0) | (self.filename.find('S2B') == 0) | \
+# 				((self.filename.find('T') == 0) & (self.filename.find('_') == 6)) ):	# looks like sentinal 2 data (old or new format) - try parsing the date from filename (contains day of year)
+# 			if self.filename.find('S2') == 0:  # old format Sentinel 2 data
+# 				self.sensor=self.filename[0:3]
+# 				b=re.search('_(?P<date>\d{8})T(?P<time>\d{6})_T(?P<tile>[A-Z0-9]{5})_A(?P<orbit>\d{6})_R(?P<rel_orbit>\d{3})_',self.filename)
+# 				self.path=np.mod(int(b.group('orbit')),143)+3  # why + 3?  there is an offset between rel_orbit and absolute orbit numbers for S2A
+# 				self.tile=b.group('tile')
+# 				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
+# 			else:
+# 				self.sensor='S2'  # would have to get S2A or when it flies S2B from full file path, which I may not maintain
+# 				b=re.search('T(?P<tile>[A-Z0-9]{5})_(?P<date>\d{8})T(?P<time>\d{6})',self.filename)
+# 				self.tile=b.group('tile')
+# 				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
+# 		else:
+# 			self.imagedatetime=None  # need to throw error in this case...or get it from metadata
+# # 		self.img=self.gd.ReadAsArray().astype(np.float32)   # works for L8 and earlier - and openCV correlation routine needs float or byte so just use float...
+# 	def imageij2XY(self,ai,aj,outx=None,outy=None):
+# 		it = np.nditer([ai,aj,outx,outy],
+# 						flags = ['external_loop', 'buffered'],
+# 						op_flags = [['readonly'],['readonly'],
+# 									['writeonly', 'allocate', 'no_broadcast'],
+# 									['writeonly', 'allocate', 'no_broadcast']])
+# 		for ii,jj,ox,oy in it:
+# 			ox[...]=(self.XYtfm[0]+((ii+0.5)*self.XYtfm[2]));
+# 			oy[...]=(self.XYtfm[1]+((jj+0.5)*self.XYtfm[3]));
+# 		return np.array(it.operands[2:4])
+# 	def XY2imageij(self,ax,ay,outi=None,outj=None):
+# 		it = np.nditer([ax,ay,outi,outj],
+# 						flags = ['external_loop', 'buffered'],
+# 						op_flags = [['readonly'],['readonly'],
+# 									['writeonly', 'allocate', 'no_broadcast'],
+# 									['writeonly', 'allocate', 'no_broadcast']])
+# 		for xx,yy,oi,oj in it:
+# 			oi[...]=((xx-self.XYtfm[0])/self.XYtfm[2])-0.5;  # if python arrays started at 1, + 0.5
+# 			oj[...]=((yy-self.XYtfm[1])/self.XYtfm[3])-0.5;  # " " " " "
+# 		return np.array(it.operands[2:4])
+# # 		self.img=self.gd.ReadAsArray().astype(np.uint8)		# L7 and earlier - doesn't work with plt.imshow...
+# # 		self.img_ov2=self.img[0::2,0::2]
+# # 		self.img_ov10=self.img[0::10,0::10]
 
 
 
@@ -215,7 +329,7 @@ class GeoImg_noload:  	# modified 1/18/2017 for use with Sentinel2 image tiles
 # # 		self.img_ov2=self.img[0::2,0::2]
 # # 		self.img_ov10=self.img[0::10,0::10]
 
-startproctime=time.clock()
+startproctime=time.perf_counter()
 startwalltime=time.time()
 t_line = "="*70
 # output_log_file_fid=None	# will be fid of output log file if the -nlf flag not thrown - then log to file as well as terminal.
@@ -223,12 +337,12 @@ t_line = "="*70
 log_output_lines=[]
 def t_log(s, outlogdisabled=False,elapsed=None):
     print(t_line)
-    print(time.strftime('UTC: %x_%X', time.gmtime()),'  Wall:%8.3f'%(time.time()-startwalltime),'  Proc:%8.3f'%(time.clock()-startproctime), '-', s)
+    print(time.strftime('UTC: %x_%X', time.gmtime()),'  Wall:%8.3f'%(time.time()-startwalltime),'  Proc:%8.3f'%(time.perf_counter()-startproctime), '-', s)
     if elapsed:
         print("Elapsed time: %s" % elapsed)
     print(t_line + '\n')
     if not(outlogdisabled):
-    	log_output_lines.append(time.strftime('UTC: %x_%X', time.gmtime()) + '  Wall:%8.3f'%(time.time()-startwalltime) + '  Proc:%8.3f'%(time.clock()-startproctime) + ' - ' + s + '\n')
+    	log_output_lines.append(time.strftime('UTC: %x_%X', time.gmtime()) + '  Wall:%8.3f'%(time.time()-startwalltime) + '  Proc:%8.3f'%(time.perf_counter()-startproctime) + ' - ' + s + '\n')
     
 
 # from accepted answer and second answer here: http://stackoverflow.com/questions/7997152/python-3d-polynomial-surface-fit-order-dependent
@@ -406,6 +520,10 @@ parser.add_argument('-max_allowable_pixel_offset_correction',
 # the rest of the parameters are flags - if raised, set to true, otherwise false
 #
 ######################################
+parser.add_argument('-do_not_highpass_input_images', 
+                    action='store_true',
+                    default=False, 
+                    help='DO NOT highpass input images before correlation - [highpass images before correlation]')
 parser.add_argument('-v', 
                     action='store_true',  
                     default=False, 
@@ -513,16 +631,15 @@ if resource_available:
 
 img1=GeoImg_noload(hp1filename,in_dir=image1dir,datestr=args.img1datestr,datefmt=args.datestrfmt)
 if psutil_available:
-	print('about to read hp img1 - using ',memory_usage_psutil(),memory_usage_resource())
+	print('about to read hp img1 - using ',memory_usage_psutil())
 
 
 
 
 
 
-if img1.sensor[0:2] == 'S2':   # sentinel 2 data, so not hp filtered
-	t_log("sentinel 2 data, so making low pass and high pass images")
-# 	file_name_base = file_name_base + '_hp_filt_%3.1f'%(args.gfilt_sigma)
+if not(args.do_not_highpass_input_images):
+	t_log("making low pass and high pass images (set -do_not_highpass_input_images to disable this step)")
 	inimg1=img1.gd.ReadAsArray().astype(np.int16)
 	lp_arr_1=inimg1.copy()
 	gaussian_filter(lp_arr_1, args.gfilt_sigma, output=lp_arr_1)
@@ -539,21 +656,21 @@ if img1.sensor[0:2] == 'S2':   # sentinel 2 data, so not hp filtered
 		print('made mask - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
 	if resource_available:
 		print('made mask - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
-	inimg1=None
-		
+	inimg1=None		
 else:
-	hp_arr_1=img1.gd.ReadAsArray().astype(np.int16)
-	img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
-	# need to test for presence of nodata value - fixed in 5p2
-	if img1.nodata_value:
-		img1_data_mask[hp_arr_1==np.int16(img1.nodata_value)]=False
-	else:
-		img1_data_mask[hp_arr_1==0]=False
+    t_log("not filtering input images because -do_not_highpass_input_images is set")
+    hp_arr_1=img1.gd.ReadAsArray().astype(np.int16)
+    img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
+    # need to test for presence of nodata value - fixed in 5p2
+    if img1.nodata_value:
+        img1_data_mask[hp_arr_1==np.int16(img1.nodata_value)]=False
+    else:
+        img1_data_mask[hp_arr_1==0]=False
 
-	if psutil_available:
-		print('made mask - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
-	if resource_available:
-		print('made mask - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
+        if psutil_available:
+            print('made mask - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
+        if resource_available:
+            print('made mask - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
 
 if psutil_available:
 	print('read hp img1 - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
@@ -563,8 +680,8 @@ if resource_available:
 
 
 img2=GeoImg_noload(hp2filename,in_dir=image2dir,datestr=args.img2datestr,datefmt=args.datestrfmt)
-if img2.sensor[0:2] == 'S2':   # sentinel 2 data, so not hp filtered
-	t_log("sentinel 2 data, so making low pass and high pass images")
+if not(args.do_not_highpass_input_images):
+# 	t_log("sentinel 2 data, so making low pass and high pass images")
 # 	file_name_base = file_name_base + '_hp_filt_%3.1f'%(args.gfilt_sigma)
 	inimg2=img2.gd.ReadAsArray().astype(np.int16)
 	lp_arr_2=inimg2.copy()
