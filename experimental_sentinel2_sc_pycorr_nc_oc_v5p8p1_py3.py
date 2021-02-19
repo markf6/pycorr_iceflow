@@ -397,8 +397,8 @@ parser.add_argument('-img2datestr',
 parser.add_argument('-datestrfmt', 
                     action='store', 
                     type=str,
-                    default='%m/%d/%y',  
-                    help='date string format for img1datestr and img2datestr [None - set from L8 filename] eg. %%m/%%d/%%y - SEE: https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior')                    
+                    default='%m/%d/%Y',  
+                    help='date string format for img1datestr and img2datestr [None - set from L8 filename] eg. %%m/%%d/%%Y - SEE: https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior')                    
 parser.add_argument('img1_name', 
                     action='store', 
                     type=str, 
