@@ -640,7 +640,7 @@ if psutil_available:
 
 if not(args.do_not_highpass_input_images):
 	t_log("making low pass and high pass images (set -do_not_highpass_input_images to disable this step)")
-	inimg1=img1.gd.ReadAsArray().astype(np.int16)
+	inimg1=img1.gd.ReadAsArray().astype(np.float32)
 	lp_arr_1=inimg1.copy()
 	gaussian_filter(lp_arr_1, args.gfilt_sigma, output=lp_arr_1)
 	hp_arr_1=inimg1 - lp_arr_1
@@ -649,7 +649,7 @@ if not(args.do_not_highpass_input_images):
 	img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
 	# need to test for presence of nodata value - fixed in 5p2
 	if img1.nodata_value:
-		img1_data_mask[inimg1==np.int16(img1.nodata_value)]=False
+		img1_data_mask[inimg1==np.float32(img1.nodata_value)]=False
 	else:
 		img1_data_mask[inimg1==0]=False
 	if psutil_available:
@@ -659,11 +659,11 @@ if not(args.do_not_highpass_input_images):
 	inimg1=None		
 else:
     t_log("not filtering input images because -do_not_highpass_input_images is set")
-    hp_arr_1=img1.gd.ReadAsArray().astype(np.int16)
+    hp_arr_1=img1.gd.ReadAsArray().astype(np.float32)
     img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
     # need to test for presence of nodata value - fixed in 5p2
     if img1.nodata_value:
-        img1_data_mask[hp_arr_1==np.int16(img1.nodata_value)]=False
+        img1_data_mask[hp_arr_1==np.float32(img1.nodata_value)]=False
     else:
         img1_data_mask[hp_arr_1==0]=False
 
@@ -683,7 +683,7 @@ img2=GeoImg_noload(hp2filename,in_dir=image2dir,datestr=args.img2datestr,datefmt
 if not(args.do_not_highpass_input_images):
 # 	t_log("sentinel 2 data, so making low pass and high pass images")
 # 	file_name_base = file_name_base + '_hp_filt_%3.1f'%(args.gfilt_sigma)
-	inimg2=img2.gd.ReadAsArray().astype(np.int16)
+	inimg2=img2.gd.ReadAsArray().astype(np.float32)
 	lp_arr_2=inimg2.copy()
 	gaussian_filter(lp_arr_2, args.gfilt_sigma, output=lp_arr_2)
 	hp_arr_2=inimg2 - lp_arr_2
@@ -692,7 +692,7 @@ if not(args.do_not_highpass_input_images):
 	inimg2=None
 		
 else:
-	hp_arr_2=img2.gd.ReadAsArray().astype(np.int16)
+	hp_arr_2=img2.gd.ReadAsArray().astype(np.float32)
 
 if psutil_available:
 	print('read hp img2 - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())

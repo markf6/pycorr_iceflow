@@ -18,6 +18,9 @@ from matplotlib.pyplot import get_cmap
 import netCDF4
 import re
 
+# pycorr_iceflow_v1 started life as experimental_sentinel2_sc_pycorr_nc_oc_v5p8p1_py3.py on 4/21/2021
+#   added -lgo_mask_limit_land_offset so that by default land and ocean pixels would not be search limited - good for fast tidewater and surging slow over oceans
+
 # v5p0 is an update to v4 that adds masks/offset correction for Alaska and eventually Greenland using glacier/land/ocean masks
 # the point0 (p0) is to indicate that this isn't complete yet - will remove that designation when it works right...
 
@@ -187,147 +190,7 @@ class GeoImg_noload:
 
 
 
-# class GeoImg_noload:  	# modified 1/18/2017 for use with Sentinel2 image tiles  
-# 						# modified 9/7/2015 for LO8 fname -> date    
-# 						# modified to noload for sc application - don't read image on setup - will read image data in main code to hp filter, delete...and keep memory footprint small
-# 	"""geocoded image input and info
-# 		a=GeoImg(in_file_name,indir='.')
-# 			a.img will contain image
-# 			a.parameter etc..."""
-# 	def __init__(self, in_filename,in_dir='.',datestr=None,datefmt='%m/%d/%y'):
-# 		self.filename = in_filename
-# 		self.in_dir_path = in_dir  #in_dir can be relative...
-# 		self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
-# 		self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
-# 		self.nodata_value=self.gd.GetRasterBand(1).GetNoDataValue()
-# 		self.srs=osr.SpatialReference(wkt=self.gd.GetProjection())
-# 		self.gt=self.gd.GetGeoTransform()
-# 		self.proj=self.gd.GetProjection()
-# 		self.intype=self.gd.GetDriver().ShortName
-# 		self.min_x=self.gt[0]
-# 		self.max_x=self.gt[0]+self.gd.RasterXSize*self.gt[1]
-# 		self.min_y=self.gt[3]+self.gt[5]*self.gd.RasterYSize
-# 		self.max_y=self.gt[3]
-# 		self.pix_x_m=self.gt[1]
-# 		self.pix_y_m=self.gt[5]
-# 		self.num_pix_x=self.gd.RasterXSize
-# 		self.num_pix_y=self.gd.RasterYSize
-# 		self.XYtfm=np.array([self.min_x,self.max_y,self.pix_x_m,self.pix_y_m]).astype('float')
-# 		if (datestr is not None):
-# 			self.imagedatetime=dt.datetime.strptime(datestr,datefmt)
-# 		elif ((self.filename.find('LC8') == 0) | (self.filename.find('LO8') == 0) | \
-# 				(self.filename.find('LE7') == 0) | (self.filename.find('LT5') == 0) | \
-# 				(self.filename.find('LT4') == 0)):	# looks landsat like - try parsing the date from filename (contains day of year)
-# 			self.sensor=self.filename[0:3]
-# 			self.path=int(self.filename[3:6])
-# 			self.row=int(self.filename[6:9])
-# 			self.year=int(self.filename[9:13])
-# 			self.doy=int(self.filename[13:16])
-# 			self.imagedatetime=dt.datetime.fromordinal(dt.date(self.year-1,12,31).toordinal()+self.doy)
-# 		elif ( (self.filename.find('S2A') == 0) | (self.filename.find('S2B') == 0) | \
-# 				((self.filename.find('T') == 0) & (self.filename.find('_') == 6)) ):	# looks like sentinal 2 data (old or new format) - try parsing the date from filename (contains day of year)
-# 			if self.filename.find('S2') == 0:  # old format Sentinel 2 data
-# 				self.sensor=self.filename[0:3]
-# 				b=re.search('_(?P<date>\d{8})T(?P<time>\d{6})_T(?P<tile>[A-Z0-9]{5})_A(?P<orbit>\d{6})_R(?P<rel_orbit>\d{3})_',self.filename)
-# 				self.path=np.mod(int(b.group('orbit')),143)+3  # why + 3?  there is an offset between rel_orbit and absolute orbit numbers for S2A
-# 				self.tile=b.group('tile')
-# 				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
-# 			else:
-# 				self.sensor='S2'  # would have to get S2A or when it flies S2B from full file path, which I may not maintain
-# 				b=re.search('T(?P<tile>[A-Z0-9]{5})_(?P<date>\d{8})T(?P<time>\d{6})',self.filename)
-# 				self.tile=b.group('tile')
-# 				self.imagedatetime=dt.datetime.strptime(b.group('date'),'%Y%m%d')
-# 		else:
-# 			self.imagedatetime=None  # need to throw error in this case...or get it from metadata
-# # 		self.img=self.gd.ReadAsArray().astype(np.float32)   # works for L8 and earlier - and openCV correlation routine needs float or byte so just use float...
-# 	def imageij2XY(self,ai,aj,outx=None,outy=None):
-# 		it = np.nditer([ai,aj,outx,outy],
-# 						flags = ['external_loop', 'buffered'],
-# 						op_flags = [['readonly'],['readonly'],
-# 									['writeonly', 'allocate', 'no_broadcast'],
-# 									['writeonly', 'allocate', 'no_broadcast']])
-# 		for ii,jj,ox,oy in it:
-# 			ox[...]=(self.XYtfm[0]+((ii+0.5)*self.XYtfm[2]));
-# 			oy[...]=(self.XYtfm[1]+((jj+0.5)*self.XYtfm[3]));
-# 		return np.array(it.operands[2:4])
-# 	def XY2imageij(self,ax,ay,outi=None,outj=None):
-# 		it = np.nditer([ax,ay,outi,outj],
-# 						flags = ['external_loop', 'buffered'],
-# 						op_flags = [['readonly'],['readonly'],
-# 									['writeonly', 'allocate', 'no_broadcast'],
-# 									['writeonly', 'allocate', 'no_broadcast']])
-# 		for xx,yy,oi,oj in it:
-# 			oi[...]=((xx-self.XYtfm[0])/self.XYtfm[2])-0.5;  # if python arrays started at 1, + 0.5
-# 			oj[...]=((yy-self.XYtfm[1])/self.XYtfm[3])-0.5;  # " " " " "
-# 		return np.array(it.operands[2:4])
-# # 		self.img=self.gd.ReadAsArray().astype(np.uint8)		# L7 and earlier - doesn't work with plt.imshow...
-# # 		self.img_ov2=self.img[0::2,0::2]
-# # 		self.img_ov10=self.img[0::10,0::10]
 
-
-
-
-# class GeoImg_noload:  # modified 9/7/2015 for LO8 fname -> date    modified to noload for sc application - don't read image on setup - will read image data in main code to hp filter, delete...and keep memory footprint small
-# 	"""geocoded image input and info
-# 		a=GeoImg(in_file_name,indir='.')
-# 			a.img will contain image
-# 			a.parameter etc..."""
-# 	def __init__(self, in_filename,in_dir='.',datestr=None,datefmt='%m/%d/%y'):
-# 		self.filename = in_filename
-# 		self.in_dir_path = in_dir  #in_dir can be relative...
-# 		self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
-# 		self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
-# 		self.nodata_value=self.gd.GetRasterBand(1).GetNoDataValue()
-# 		self.srs=osr.SpatialReference(wkt=self.gd.GetProjection())
-# 		self.gt=self.gd.GetGeoTransform()
-# 		self.proj=self.gd.GetProjection()
-# 		self.intype=self.gd.GetDriver().ShortName
-# 		self.min_x=self.gt[0]
-# 		self.max_x=self.gt[0]+self.gd.RasterXSize*self.gt[1]
-# 		self.min_y=self.gt[3]+self.gt[5]*self.gd.RasterYSize
-# 		self.max_y=self.gt[3]
-# 		self.pix_x_m=self.gt[1]
-# 		self.pix_y_m=self.gt[5]
-# 		self.num_pix_x=self.gd.RasterXSize
-# 		self.num_pix_y=self.gd.RasterYSize
-# 		self.XYtfm=np.array([self.min_x,self.max_y,self.pix_x_m,self.pix_y_m]).astype('float')
-# 		if (datestr is not None):
-# 			self.imagedatetime=dt.datetime.strptime(datestr,datefmt)
-# 		elif ((self.filename.find('LC8') == 0) | (self.filename.find('LO8') == 0) | \
-# 				(self.filename.find('LE7') == 0) | (self.filename.find('LT5') == 0) | \
-# 				(self.filename.find('LT4') == 0)):	# looks landsat like - try parsing the date from filename (contains day of year)
-# 			self.sensor=self.filename[0:3]
-# 			self.path=int(self.filename[3:6])
-# 			self.row=int(self.filename[6:9])
-# 			self.year=int(self.filename[9:13])
-# 			self.doy=int(self.filename[13:16])
-# 			self.imagedatetime=dt.datetime.fromordinal(dt.date(self.year-1,12,31).toordinal()+self.doy)
-# 		else:
-# 			self.imagedatetime=None  # need to throw error in this case...or get it from metadata
-# # 		self.img=self.gd.ReadAsArray().astype(np.float32)   # works for L8 and earlier - and openCV correlation routine needs float or byte so just use float...
-# 	def imageij2XY(self,ai,aj,outx=None,outy=None):
-# 		it = np.nditer([ai,aj,outx,outy],
-# 						flags = ['external_loop', 'buffered'],
-# 						op_flags = [['readonly'],['readonly'],
-# 									['writeonly', 'allocate', 'no_broadcast'],
-# 									['writeonly', 'allocate', 'no_broadcast']])
-# 		for ii,jj,ox,oy in it:
-# 			ox[...]=(self.XYtfm[0]+((ii+0.5)*self.XYtfm[2]));
-# 			oy[...]=(self.XYtfm[1]+((jj+0.5)*self.XYtfm[3]));
-# 		return np.array(it.operands[2:4])
-# 	def XY2imageij(self,ax,ay,outi=None,outj=None):
-# 		it = np.nditer([ax,ay,outi,outj],
-# 						flags = ['external_loop', 'buffered'],
-# 						op_flags = [['readonly'],['readonly'],
-# 									['writeonly', 'allocate', 'no_broadcast'],
-# 									['writeonly', 'allocate', 'no_broadcast']])
-# 		for xx,yy,oi,oj in it:
-# 			oi[...]=((xx-self.XYtfm[0])/self.XYtfm[2])-0.5;  # if python arrays started at 1, + 0.5
-# 			oj[...]=((yy-self.XYtfm[1])/self.XYtfm[3])-0.5;  # " " " " "
-# 		return np.array(it.operands[2:4])
-# # 		self.img=self.gd.ReadAsArray().astype(np.uint8)		# L7 and earlier - doesn't work with plt.imshow...
-# # 		self.img_ov2=self.img[0::2,0::2]
-# # 		self.img_ov10=self.img[0::10,0::10]
 
 startproctime=time.perf_counter()
 startwalltime=time.time()
@@ -456,7 +319,7 @@ parser.add_argument('-gfilt_sigma',
                     action='store', 
                     type=float, 
                     default=3.0, 
-                    help='gaussian filter sigma (standard deviation for Gaussian kernel) [%(default)f]')
+                    help='gaussian filter sigma (standard deviation in pixels for Gaussian kernel) [%(default)f]')
 parser.add_argument('-dcam', 
                     action='store', 
                     type=float, 
@@ -488,7 +351,7 @@ parser.add_argument('-Greenland',
 parser.add_argument('-speed_ref_dir', 
                     action='store', 
                     type=str, 
-                    default='/projects/makl5454', 
+                    default='.', 
                     help='path for directory where speed_ref mosaic (speed in m/yr) is kept [%(default)s]')
 parser.add_argument('-speed_ref_filename', 
                     action='store', 
@@ -508,7 +371,7 @@ parser.add_argument('-lgo_mask_file_dir',
 parser.add_argument('-VRT_dir', 
                     action='store', 
                     type=str, 
-                    default='/projects/makl5454', 
+                    default='.', 
                     help='path to directory where temporary .vrt files will be stored, then deleted, for access to part of speed_ref or lgo-mask mosaic [%(default)s]')
 parser.add_argument('-max_allowable_pixel_offset_correction', 
                     action='store', 
@@ -560,6 +423,10 @@ parser.add_argument('-offset_correction_lgo_mask',
                     action='store_true',
                     default=False, 
                     help='estimate offset from land pixels and make correct output vels with constant vx and vy shifts (requires -lgo_mask_file_fullpath - [False]')
+parser.add_argument('-lgo_mask_limit_land_offset', 
+                    action='store_true',
+                    default=False, 
+                    help='when source chip center is a land pixel, limit search distance (requires -lgo_mask_file_fullpath - [False]')
 parser.add_argument('-offset_correction_bilinear_fit', 
                     action='store_true',
                     default=False, 
@@ -640,7 +507,7 @@ if psutil_available:
 
 if not(args.do_not_highpass_input_images):
 	t_log("making low pass and high pass images (set -do_not_highpass_input_images to disable this step)")
-	inimg1=img1.gd.ReadAsArray().astype(np.int16)
+	inimg1=img1.gd.ReadAsArray().astype(np.float32)
 	lp_arr_1=inimg1.copy()
 	gaussian_filter(lp_arr_1, args.gfilt_sigma, output=lp_arr_1)
 	hp_arr_1=inimg1 - lp_arr_1
@@ -649,7 +516,7 @@ if not(args.do_not_highpass_input_images):
 	img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
 	# need to test for presence of nodata value - fixed in 5p2
 	if img1.nodata_value:
-		img1_data_mask[inimg1==np.int16(img1.nodata_value)]=False
+		img1_data_mask[inimg1==np.float32(img1.nodata_value)]=False
 	else:
 		img1_data_mask[inimg1==0]=False
 	if psutil_available:
@@ -659,11 +526,11 @@ if not(args.do_not_highpass_input_images):
 	inimg1=None		
 else:
     t_log("not filtering input images because -do_not_highpass_input_images is set")
-    hp_arr_1=img1.gd.ReadAsArray().astype(np.int16)
+    hp_arr_1=img1.gd.ReadAsArray().astype(np.float32)
     img1_data_mask=np.ones_like(hp_arr_1, dtype=bool)
     # need to test for presence of nodata value - fixed in 5p2
     if img1.nodata_value:
-        img1_data_mask[hp_arr_1==np.int16(img1.nodata_value)]=False
+        img1_data_mask[hp_arr_1==np.float32(img1.nodata_value)]=False
     else:
         img1_data_mask[hp_arr_1==0]=False
 
@@ -683,7 +550,7 @@ img2=GeoImg_noload(hp2filename,in_dir=image2dir,datestr=args.img2datestr,datefmt
 if not(args.do_not_highpass_input_images):
 # 	t_log("sentinel 2 data, so making low pass and high pass images")
 # 	file_name_base = file_name_base + '_hp_filt_%3.1f'%(args.gfilt_sigma)
-	inimg2=img2.gd.ReadAsArray().astype(np.int16)
+	inimg2=img2.gd.ReadAsArray().astype(np.float32)
 	lp_arr_2=inimg2.copy()
 	gaussian_filter(lp_arr_2, args.gfilt_sigma, output=lp_arr_2)
 	hp_arr_2=inimg2 - lp_arr_2
@@ -692,7 +559,7 @@ if not(args.do_not_highpass_input_images):
 	inimg2=None
 		
 else:
-	hp_arr_2=img2.gd.ReadAsArray().astype(np.int16)
+	hp_arr_2=img2.gd.ReadAsArray().astype(np.float32)
 
 if psutil_available:
 	print('read hp img2 - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
@@ -947,7 +814,7 @@ if not(args.no_speed_ref):
 		
 		# first - open the vv mosaic but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
 		tmp_speed_ref_orig=GeoImg_noload(args.speed_ref_filename,args.speed_ref_dir)
-		source = img1.srs		# the local UTM of the L8 image
+		source = img1.srs		# the local UTM of the input image
 		target = tmp_speed_ref_orig.srs
 		# set up transform from local utm to PS of vel ref image, to calculate the corners of the vref mosaic covering this area
 		transform_utm_to_PS = osr.CoordinateTransformation(source, target)
@@ -1009,9 +876,9 @@ if not(args.no_speed_ref):
 		speedref_vel_vv=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
 
 	
-		print('got speed_ref_vv data and reprojected to original L8 image local utm')
+		print('got speed_ref_vv data and reprojected to original image local utm')
 		if not(args.nlf):
-			log_output_lines.append('# got speed_ref_vv data and reprojected to original L8 image local utm')
+			log_output_lines.append('# got speed_ref_vv data and reprojected to original image local utm')
 			log_output_lines.append('# speed_ref_vv reference (speed_ref_vv mask file: %s) from speed_ref_vv vrt file: %s\n'%(path_to_speed_ref_vv,output_vv_vrt_name))
 		
 		if args.offset_correction_speedref:  # need to read and reproject vx and vy ref data as well...
@@ -1063,9 +930,9 @@ if not(args.no_speed_ref):
 # 		inmem_speed_ref_vx_utm=None
 # 		inmem_speed_ref_vy_utm=None
 		
-		print('got speed_ref_vx and vy data and reprojected to original L8 image local utm')
+		print('got speed_ref_vx and vy data and reprojected to original image local utm')
 		if not(args.nlf):
-			log_output_lines.append('# got speed_ref_vx and vy data and reprojected to original L8 image local utm')
+			log_output_lines.append('# got speed_ref_vx and vy data and reprojected to original image local utm')
 		
 	if psutil_available:
 		print('got speed_ref data - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
@@ -1154,9 +1021,9 @@ if args.offset_correction_lgo_mask:
 	lgo_mask_image_utm=inmem_lgo_mask_utm.ReadAsArray().astype(np.byte)
 	
 	
-	print('got lgo mask data and reprojected to original L8 image local utm')
+	print('got lgo mask data and reprojected to original image local utm')
 	if not(args.nlf):
-		log_output_lines.append('# got lgo mask data and reprojected to original L8 image local utm')
+		log_output_lines.append('# got lgo mask data and reprojected to original image local utm')
 		log_output_lines.append('# lgo mask reference (lgo mask file: %s) from lgo mask vrt file: %s\n'%(path_to_lgo_mask,output_lgo_vrt_name))
 
 
@@ -1214,7 +1081,7 @@ for i in range(min_ind_i,max_ind_i+1):
 				new_cent_loc=new_half_target_chip-half_source_chip  # offset found in cv2 is referenced to returned array chip center, which has size full_source_chip - full_target_chip - so center is dif of half sizes.
 # 				print wcs_vel.img[j][i],vmax,maxpixoffset,new_half_target_chip
 				chip_tar=img2_src_arr[(r_j_2[j]-new_half_target_chip):(r_j_2[j]+new_half_target_chip),(r_i_2[i]-new_half_target_chip):(r_i_2[i]+new_half_target_chip)].astype(np.float32)
-			elif args.offset_correction_lgo_mask and (lgo_mask_image_utm[j][i]>=1):		# if there is a land mask and this particular source chip location is "land" (or ocean (2)), then make small search size (how far can land move?)
+			elif args.offset_correction_lgo_mask and args.lgo_mask_limit_land_offset and (lgo_mask_image_utm[j][i]>=1):		# if there is a land mask and this particular source chip location is "land" (or ocean (2)), then make small search size (how far can land move?)
 				new_half_target_chip = half_source_chip + 5 # set target chip size to 5 more than source chip size - image to image offset with no motion should not be larger than this...
 				if new_half_target_chip > half_target_chip:
 					new_half_target_chip = half_target_chip   # max target chip size is specified half_target_chip - this ensures we stay in the image... (half_target_chip value was used in setting bounding box)
