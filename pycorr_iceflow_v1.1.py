@@ -19,30 +19,24 @@ import netCDF4
 import re
 
 # this is all for using the its-live land masks that are on S3
-# import boto3
-# import fiona
-# n = fiona.open('s3://its-live-data.jpl.nasa.gov/autorift_parameters/v001/autorift_landice_0120m.shp')
-# len(n)
-# n.env
-# n.env()
-#     zones=[]
-#     for line in n:
-#         zones.append((asShape(line['geometry']),line))
-# import numpy as np
-# import gdal
-# from shapely.geometry import Point, Polygon, asShape
-#     zones=[]
-#     for line in n:
-#         zones.append((asShape(line['geometry']),line))
-# len(zones)
-# pt_lat = 52.2
-# pt_lon = -117.25
-# pt = Point(pt_lon,pt_lat)
-# pt.wkt
-# ptzone = [l for geom,l in zones if geom.contains(pt)]
-# landmask_tif_url = ptzone[0]['properties']['land']
-# landmask_tif_url
+import boto3
+import fiona
+from shapely.geometry import Point, Polygon, asShape
+import pyproj # used to find lon,lat from img1 midpoint
 
+def return_its_live_land_mask_URL(lat=None,lon=None):
+    with fiona.open('s3://its-live-data.jpl.nasa.gov/autorift_parameters/v001/autorift_landice_0120m.shp') as its_live_zones:
+        zones=[]
+        for feature in its_live_zones:
+            zones.append((asShape(feature['geometry']),feature))
+        pt = Point(lon,lat)
+        ptzone = [l for geom,l in zones if geom.contains(pt)] # should only return 1 feature in list
+        landmask_tif_url = ptzone[0]['properties']['land']
+    return(landmask_tif_url)
+
+
+# pycorr_iceflow_v1.1 drops (comments out) speed_ref correction and bilinear offset correction, leaving land mask based constant x and y offset correction
+#                     it adds the ability to use the its-live cloud based land mask (requires web connection) rather than local mask file
 
 # pycorr_iceflow_v1 started life as experimental_sentinel2_sc_pycorr_nc_oc_v5p8p1_py3.py on 4/21/2021
 #   added -lgo_mask_limit_land_offset so that by default land and ocean pixels would not be search limited - good for fast tidewater and surging slow over oceans
@@ -361,29 +355,24 @@ parser.add_argument('-cam1',
                     type=float, 
                     default=0.0, 
                     help='corr peak value max for or mask (see full mask statement in -dcam help) [%(default)f]')
-# parser.add_argument('-of', 
+# parser.add_argument('-no_speed_ref', 
+#                     action='store_true',  
+#                     default=False, 
+#                     help='Do NOT use speed reference to set search chip sizes (and optionally to correct offsets) (use default max speed instead) [False if not raised]')
+# parser.add_argument('-Greenland', 
+#                     action='store_true',  
+#                     default=False, 
+#                     help='this pair is in Greenland - needed so that vref vv mosaic is reprojected when input (unlike Antarctica) [False if not raised]')
+# parser.add_argument('-speed_ref_dir', 
 #                     action='store', 
 #                     type=str, 
-#                     default='GTiff', 
-#                     help='output format string (GDAL short format name - presently only GTiff and ENVI supported) [GTiff]')
-parser.add_argument('-no_speed_ref', 
-                    action='store_true',  
-                    default=False, 
-                    help='Do NOT use speed reference to set search chip sizes (and optionally to correct offsets) (use default max speed instead) [False if not raised]')
-parser.add_argument('-Greenland', 
-                    action='store_true',  
-                    default=False, 
-                    help='this pair is in Greenland - needed so that vref vv mosaic is reprojected when input (unlike Antarctica) [False if not raised]')
-parser.add_argument('-speed_ref_dir', 
-                    action='store', 
-                    type=str, 
-                    default='.', 
-                    help='path for directory where speed_ref mosaic (speed in m/yr) is kept [%(default)s]')
-parser.add_argument('-speed_ref_filename', 
-                    action='store', 
-                    type=str, 
-                    default='LISA_750m_vv.tif', 
-                    help='name of speed_ref mosaic (speed in m/yr) [%(default)s]')
+#                     default='.', 
+#                     help='path for directory where speed_ref mosaic (speed in m/yr) is kept [%(default)s]')
+# parser.add_argument('-speed_ref_filename', 
+#                     action='store', 
+#                     type=str, 
+#                     default='LISA_750m_vv.tif', 
+#                     help='name of speed_ref mosaic (speed in m/yr) [%(default)s]')
 parser.add_argument('-lgo_mask_filename', 
                     action='store', 
                     type=str, 
@@ -394,6 +383,10 @@ parser.add_argument('-lgo_mask_file_dir',
                     type=str, 
                     default=None, 
                     help='path to diretory containing land_glacier_ocean mask file (used for lgo-mask-based offset correction) [%(default)s]')
+parser.add_argument('-use_itslive_land_mask_from_web', 
+                    action='store_true',
+                    default=False, 
+                    help='pull a land mask from itslive.jpl.nasa.gov S3 bucket (will enable offset correction and disable local lgo_mask use) [False if not raised]')
 parser.add_argument('-VRT_dir', 
                     action='store', 
                     type=str, 
@@ -441,27 +434,27 @@ parser.add_argument('-debug_tifs',
                     action='store_true',
                     default=False, 
                     help='output int offsets and other diagnostic tifs - [no]')
-parser.add_argument('-offset_correction_speedref', 
-                    action='store_true',
-                    default=False, 
-                    help='estimate offset at slow moving areas and correct output vels with constant vx and vy shifts (requires -speed_ref files (vv,vx,vy - vv specified)) - [False]')
+# parser.add_argument('-offset_correction_speedref', 
+#                     action='store_true',
+#                     default=False, 
+#                     help='estimate offset at slow moving areas and correct output vels with constant vx and vy shifts (requires -speed_ref files (vv,vx,vy - vv specified)) - [False]')
 parser.add_argument('-offset_correction_lgo_mask', 
                     action='store_true',
                     default=False, 
-                    help='estimate offset from land pixels and make correct output vels with constant vx and vy shifts (requires -lgo_mask_file_fullpath - [False]')
+                    help='estimate offset from land pixels and make correct output vels with constant vx and vy shifts (requires -lgo_mask_file - [False]')
 parser.add_argument('-lgo_mask_limit_land_offset', 
                     action='store_true',
                     default=False, 
-                    help='when source chip center is a land pixel, limit search distance (requires -lgo_mask_file_fullpath - [False]')
-parser.add_argument('-offset_correction_bilinear_fit', 
-                    action='store_true',
-                    default=False, 
-                    help='use planar corrections to both i and j offsets to correct misfit - currently ONLY for lgo land pixels... - [False]')
-parser.add_argument('-offset_correction_bilinear_fit_min_pixels', 
-                    action='store',
-                    type=int,
-                    default=2000, 
-                    help='min valid land pixels to use planar corrections to both i and j offsets to correct misfit - [%(default)d]')
+                    help='when source chip center is a land pixel, limit search distance (requires -lgo_mask_file - [False]')
+# parser.add_argument('-offset_correction_bilinear_fit', 
+#                     action='store_true',
+#                     default=False, 
+#                     help='use planar corrections to both i and j offsets to correct misfit - currently ONLY for lgo land pixels... - [False]')
+# parser.add_argument('-offset_correction_bilinear_fit_min_pixels', 
+#                     action='store',
+#                     type=int,
+#                     default=2000, 
+#                     help='min valid land pixels to use planar corrections to both i and j offsets to correct misfit - [%(default)d]')
 args = parser.parse_args()
 
 
@@ -784,273 +777,289 @@ if psutil_available:
 if resource_available:
 	print('set up output arrays - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
 
-if not(args.no_speed_ref):
-	# set up vrt file to sample reference speed mosaic at chip centers - this will be used to set search chip sizes for each point
-	# if args.offset_correction_speedref is True, then read vx and vy reference data as well, for offset correction
-	ulx=output_array_ul_corner[0]
-	uly=output_array_ul_corner[1]
-	lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
-	lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
+# following section commented out for pycorr_iceflow_v1.1
+# if not(args.no_speed_ref):
+# 	# set up vrt file to sample reference speed mosaic at chip centers - this will be used to set search chip sizes for each point
+# 	# if args.offset_correction_speedref is True, then read vx and vy reference data as well, for offset correction
+# 	ulx=output_array_ul_corner[0]
+# 	uly=output_array_ul_corner[1]
+# 	lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
+# 	lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
+# 	
+# 	path_to_speed_ref_vv = args.speed_ref_dir+ '/' + args.speed_ref_filename
+# 	output_vv_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vv.vrt'
+# 	
+# 	
+# 	
+# 	if not(args.Greenland):  # ANTARCTICA - this is in Antarctica, where Landsat images and vref mosaic are in the SAME projection!
+# 		# -te needs xmin ymin xmax ymax - that is what is below, using the corners
+# 		sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vv_vrt_name), path_to_speed_ref_vv])  # import subprocess as sp
+# 		speedref_geoimg_vv=GeoImg_noload(output_vv_vrt_name,in_dir=args.VRT_dir)
+# 		speedref_vel_vv=speedref_geoimg_vv.gd.ReadAsArray().astype(np.float32)
+# 		if speedref_geoimg_vv.nodata_value:
+# 			speedref_vv_nodata=speedref_geoimg_vv.nodata_value
+# 		else:
+# 			speedref_vv_nodata=None
+# 		os.remove(args.VRT_dir + '/' + output_vv_vrt_name)  # get rid of the temporary vrt file now
+# 		print('got speedref vel data')
+# 		if not(args.nlf):
+# 			log_output_lines.append('# using speed reference (speedref file: %s) from speedref vrt file: %s\n'%(args.speed_ref_filename,output_vv_vrt_name))
+# 
+# 		if args.offset_correction_speedref:  # need to read vx and vy ref data as well...
+# 			path_to_speed_ref_vx = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vx')   # MARIN need to fix this...
+# 			path_to_speed_ref_vy = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vy')   # MARIN need to fix this...
+# 			output_vx_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vx.vrt'
+# 			output_vy_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vy.vrt'
+# 			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vx_vrt_name), path_to_speed_ref_vx])  # import subprocess as sp
+# 			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vy_vrt_name), path_to_speed_ref_vy])  # import subprocess as sp
+# 			speedref_geoimg_vx=GeoImg_noload(output_vx_vrt_name,in_dir=args.VRT_dir)
+# 			speedref_vel_vx=speedref_geoimg_vx.gd.ReadAsArray().astype(np.float32)
+# 			if speedref_geoimg_vx.nodata_value:
+# 				speedref_vx_nodata=speedref_geoimg_vx.nodata_value
+# 			else:
+# 				speedref_vx_nodata=None
+# 		
+# 			speedref_geoimg_vy=GeoImg_noload(output_vy_vrt_name,in_dir=args.VRT_dir)
+# 			speedref_vel_vy=speedref_geoimg_vy.gd.ReadAsArray().astype(np.float32)
+# 			if speedref_geoimg_vy.nodata_value:
+# 				speedref_vy_nodata=speedref_geoimg_vy.nodata_value
+# 			else:
+# 				speedref_vy_nodata=None		
+# 			os.remove(args.VRT_dir + '/' + output_vx_vrt_name)  # get rid of the temporary vrt file now
+# 			os.remove(args.VRT_dir + '/' + output_vy_vrt_name)  # get rid of the temporary vrt file now
+# 			if not(args.nlf):
+# 				log_output_lines.append('# using speed reference vx and vy data as well\n')
+# 		
+# 	else:  # this is in GREENLAND, where Landsat images and vref mosaic are in DIFFERENT PROJECTIONS and so vref components must be reprojected!
+# 		
+# 		# first - open the vv mosaic but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
+# 		tmp_speed_ref_orig=GeoImg_noload(args.speed_ref_filename,args.speed_ref_dir)
+# 		source = img1.srs		# the local UTM of the input image
+# 		target = tmp_speed_ref_orig.srs
+# 		# set up transform from local utm to PS of vel ref image, to calculate the corners of the vref mosaic covering this area
+# 		transform_utm_to_PS = osr.CoordinateTransformation(source, target)
+# 		# set up inv transform to that above to project the endpoints of each PS vx,vy vector to find local vref vy and vy in utm reference frame
+# 		inv_transform_PS_to_utm = osr.CoordinateTransformation(target, source)
+# 
+# 		# set up to sample speed_ref mz at chip centers - this will be used to find mask value at each point
+# 		# in L8 image local UTM, these are:
+# 		utm_ulx=output_array_ul_corner[0]
+# 		utm_uly=output_array_ul_corner[1]
+# 	# 	lrx=output_array_ul_corner[0] + (r_i_2.__len__() * inc * img1.pix_x_m)
+# 	# 	lry=output_array_ul_corner[1] + (r_j_2.__len__() * inc * img1.pix_y_m)
+# 		utm_lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
+# 		utm_lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
+# 	
+# 		#########################
+# 		# now we project output array corners from local UTM back to projection of speed_ref mz
+# 		(tulx, tuly, tulz ) = transform_utm_to_PS.TransformPoint( utm_ulx, utm_uly, 0.0 )
+# 		(turx, tury, turz ) = transform_utm_to_PS.TransformPoint( utm_lrx, utm_uly, 0.0 )
+# 		(tlrx, tlry, tlrz ) = transform_utm_to_PS.TransformPoint( utm_lrx, utm_lry, 0.0 )
+# 		(tllx, tlly, tllz ) = transform_utm_to_PS.TransformPoint( utm_ulx, utm_lry, 0.0 )
+# 		#####################
+# 		# Make .vrt for speed_ref image that is in local UTM to match Band 8 images 
+# 		# - will reproject speed_ref img in memory to local utm after reading in just this part of data - .vrt limits the read size...
+# 		#####################
+# 		ulx=np.min([tulx,tllx])
+# 		uly=np.max([tuly,tury])
+# 		lrx=np.max([turx,tlrx])
+# 		lry=np.min([tlly,tlry])
+# 	
+# 		sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vv_vrt_name), path_to_speed_ref_vv])  # import subprocess as sp
+# 		speed_ref_vv_cropped_geoimg=GeoImg_noload(output_vv_vrt_name,in_dir=args.VRT_dir)
+# # AM I CORRECT (11/3/16)? that this next read served no purpose? commenting it out here to see...
+# # 		speed_ref_vv_cropped_mask=speed_ref_vv_cropped_geoimg.gd.ReadAsArray().astype(np.float32)
+# 		if speed_ref_vv_cropped_geoimg.nodata_value:
+# 			speedref_vv_nodata=speed_ref_vv_cropped_geoimg.nodata_value
+# 		else:
+# 			speedref_vv_nodata=None
+# 		tmp_speed_ref_orig=None  # close GeoImg_noload object used on full original lgo_mask file, used to get srs above, but no input of data
+# 	
+# 		#####################
+# 		# now reproject cropped input mask into local UTM so speed_ref_vv can be used to identify
+# 		# pixels that shouldn't move
+# 		#####################
+# 		mem_drv = gdal.GetDriverByName( 'MEM' )
+# 		# 	inmem_lgo_mask_utm=mem_drv.CreateCopy('',in_vx.gd)   # actually don't need the data, but the rest is good
+# 		inmem_speed_ref_vv_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
+# 		inmem_speed_ref_vv_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
+# 		inmem_speed_ref_vv_utm.SetProjection ( img1.proj )
+# 		#############################################
+# 		# following is fix for mem driver not copying nodata pixels - set nodata value and fill band before reprojecting
+# 		# FROM: https://trac.osgeo.org/gdal/ticket/6404 or stackexchange links found there
+# 		#############################################
+# 		rb1=inmem_speed_ref_vv_utm.GetRasterBand(1)
+# 		rb1.SetNoDataValue(speedref_vv_nodata)
+# 		rb1.Fill(speedref_vv_nodata)
+# 
+# 		res = gdal.ReprojectImage( speed_ref_vv_cropped_geoimg.gd, inmem_speed_ref_vv_utm, speed_ref_vv_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
+# 		speedref_vel_vv=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
+# 
+# 	
+# 		print('got speed_ref_vv data and reprojected to original image local utm')
+# 		if not(args.nlf):
+# 			log_output_lines.append('# got speed_ref_vv data and reprojected to original image local utm')
+# 			log_output_lines.append('# speed_ref_vv reference (speed_ref_vv mask file: %s) from speed_ref_vv vrt file: %s\n'%(path_to_speed_ref_vv,output_vv_vrt_name))
+# 		
+# 		if args.offset_correction_speedref:  # need to read and reproject vx and vy ref data as well...
+# 			path_to_speed_ref_vx = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vx')
+# 			path_to_speed_ref_vy = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vy')
+# 			output_vx_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vx.vrt'
+# 			output_vy_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vy.vrt'
+# 			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vx_vrt_name), path_to_speed_ref_vx])  # import subprocess as sp
+# 			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vy_vrt_name), path_to_speed_ref_vy])  # import subprocess as sp
+# 			speed_ref_vx_cropped_geoimg=GeoImg_noload(output_vx_vrt_name,in_dir=args.VRT_dir)
+# 			speed_ref_vy_cropped_geoimg=GeoImg_noload(output_vy_vrt_name,in_dir=args.VRT_dir)
+# 			# reproject PS vx value into utm before converting to utm vx value
+# 			inmem_speed_ref_vx_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
+# 			inmem_speed_ref_vx_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
+# 			inmem_speed_ref_vx_utm.SetProjection ( img1.proj )
+# 			res = gdal.ReprojectImage( speed_ref_vx_cropped_geoimg.gd, inmem_speed_ref_vx_utm, speed_ref_vx_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
+# 			speedref_vel_PS_vx_in_utm=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
+# 			# reproject PS vy value into utm before converting to utm vy value
+# 			inmem_speed_ref_vy_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
+# 			inmem_speed_ref_vy_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
+# 			inmem_speed_ref_vy_utm.SetProjection ( img1.proj )
+# 			res = gdal.ReprojectImage( speed_ref_vy_cropped_geoimg.gd, inmem_speed_ref_vy_utm, speed_ref_vy_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
+# 			speedref_vel_PS_vy_in_utm=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
+# 			# will convert the PSvx,PSvy components (at local utm centers already) to local utmvx,utmvy components to compare with feature tracking of local utm Landsat...
+# 			if speedref_vv_nodata:
+# 				speedref_vel_vx=np.ones_like(speedref_vel_vv) * speedref_vv_nodata
+# 				speedref_vel_vy=np.ones_like(speedref_vel_vv) * speedref_vv_nodata
+# 				pts=np.where(speedref_vel_vv!=speedref_vv_nodata)  # indices of points to reproject vx and vy
+# 			else:
+# 				speedref_vel_vx=np.zeros_like(speedref_vel_vv)
+# 				speedref_vel_vy=np.zeros_like(speedref_vel_vv)
+# 				pts=np.where((speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))  # indices of points to reproject vx and vy
+# 			for i,j in zip(*pts): # iterate over these points
+# 				PSvx=speedref_vel_PS_vx_in_utm[i,j]
+# 				PSvy=speedref_vel_PS_vy_in_utm[i,j]
+# 				UTMx,UTMy=chip_center_grid_xy[:,i,j]
+# 				(PSx,PSy,PSz) = transform_utm_to_PS.TransformPoint( UTMx, UTMy, 0.0 )
+# 				(UTMx_vec_end_point, UTMy_vec_end_point, UTMz_vec_end_point) = inv_transform_PS_to_utm.TransformPoint( PSx + PSvx, PSy + PSvy, PSz)
+# 				speedref_vel_vx[i,j] = UTMx_vec_end_point - UTMx
+# 				speedref_vel_vy[i,j] = UTMy_vec_end_point - UTMy
+# 		
+# 		os.remove(args.VRT_dir + '/' + output_vx_vrt_name)  # get rid of the temporary vrt file now
+# 		os.remove(args.VRT_dir + '/' + output_vy_vrt_name)  # get rid of the temporary vrt file now
+# 		os.remove(args.VRT_dir + '/' + output_vv_vrt_name)  # get rid of the temporary vrt file now
+# ##########################
+# # commented these out for debugging driver issue - uncomment for production to free memory
+# ##########################
+# # 		inmem_speed_ref_vv_utm=None
+# # 		inmem_speed_ref_vx_utm=None
+# # 		inmem_speed_ref_vy_utm=None
+# 		
+# 		print('got speed_ref_vx and vy data and reprojected to original image local utm')
+# 		if not(args.nlf):
+# 			log_output_lines.append('# got speed_ref_vx and vy data and reprojected to original image local utm')
+# 		
+# 	if psutil_available:
+# 		print('got speed_ref data - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
+# 	if resource_available:
+# 		print('got speed_ref data - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
 	
-	path_to_speed_ref_vv = args.speed_ref_dir+ '/' + args.speed_ref_filename
-	output_vv_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vv.vrt'
 	
 	
 	
-	if not(args.Greenland):  # ANTARCTICA - this is in Antarctica, where Landsat images and vref mosaic are in the SAME projection!
-		# -te needs xmin ymin xmax ymax - that is what is below, using the corners
-		sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vv_vrt_name), path_to_speed_ref_vv])  # import subprocess as sp
-		speedref_geoimg_vv=GeoImg_noload(output_vv_vrt_name,in_dir=args.VRT_dir)
-		speedref_vel_vv=speedref_geoimg_vv.gd.ReadAsArray().astype(np.float32)
-		if speedref_geoimg_vv.nodata_value:
-			speedref_vv_nodata=speedref_geoimg_vv.nodata_value
-		else:
-			speedref_vv_nodata=None
-		os.remove(args.VRT_dir + '/' + output_vv_vrt_name)  # get rid of the temporary vrt file now
-		print('got speedref vel data')
-		if not(args.nlf):
-			log_output_lines.append('# using speed reference (speedref file: %s) from speedref vrt file: %s\n'%(args.speed_ref_filename,output_vv_vrt_name))
+	
+if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
+    # use land(1)-glacier(0)-ocean(2) mask to find land pixels for offset correction - means reprojecting mask into Landsat image's local UTM
+    #########################  Following code started from GRN_find_offset_reproject_to_PS_olg_mask_v3_fitWCS_ifnoland_multiprocess.py
+    # now make a .vrt of the area of the land/ocean/glacier mask image (so you only 
+    # have to read in a small part of the mask)
+    # original mask is in it's own projection 
+    # find local UTM corners of input, transform to mask's projection, set up .vrt of required area 
+    # from mask, read it in, warp in memory to local UTM, apply land mask to find
+    # pixels that should have had 0 vel, do offset correction
+    # seems like a long way around, but would like to have consistent dataset tied to original image
+    # Will need to reproject for mosaicking - may want to use a central UTM for each group of glaciers rather than ACC?
+    #########################
+    # first - open the lgo mask but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
+    if args.use_itslive_land_mask_from_web:
+        midx = np.mean([img1.min_x,img1.max_x])
+        midy = np.mean([img1.min_y,img1.max_y])
+        transformer = pyproj.Transformer.from_crs(img1.proj,'EPSG:4326',always_xy=True)
+        lon,lat = transformer.transform(midx,midy)
+        print('finding its-live land mask')
+        maskfullpath = return_its_live_land_mask_URL(lat=lat,lon=lon)
+        print('found')
+        splitpath = maskfullpath.split('/')
+        maskdir = '/vsicurl/' + '/'.join(splitpath[:-1])
+        maskfile = splitpath[-1]
+    else:
+        maskdir = args.lgo_mask_file_dir
+        maskfile = args.lgo_mask_filename
+    
+    tmp_lgo_orig=GeoImg_noload(maskfile,maskdir)
 
-		if args.offset_correction_speedref:  # need to read vx and vy ref data as well...
-			path_to_speed_ref_vx = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vx')   # MARIN need to fix this...
-			path_to_speed_ref_vy = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vy')   # MARIN need to fix this...
-			output_vx_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vx.vrt'
-			output_vy_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vy.vrt'
-			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vx_vrt_name), path_to_speed_ref_vx])  # import subprocess as sp
-			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vy_vrt_name), path_to_speed_ref_vy])  # import subprocess as sp
-			speedref_geoimg_vx=GeoImg_noload(output_vx_vrt_name,in_dir=args.VRT_dir)
-			speedref_vel_vx=speedref_geoimg_vx.gd.ReadAsArray().astype(np.float32)
-			if speedref_geoimg_vx.nodata_value:
-				speedref_vx_nodata=speedref_geoimg_vx.nodata_value
-			else:
-				speedref_vx_nodata=None
-		
-			speedref_geoimg_vy=GeoImg_noload(output_vy_vrt_name,in_dir=args.VRT_dir)
-			speedref_vel_vy=speedref_geoimg_vy.gd.ReadAsArray().astype(np.float32)
-			if speedref_geoimg_vy.nodata_value:
-				speedref_vy_nodata=speedref_geoimg_vy.nodata_value
-			else:
-				speedref_vy_nodata=None		
-			os.remove(args.VRT_dir + '/' + output_vx_vrt_name)  # get rid of the temporary vrt file now
-			os.remove(args.VRT_dir + '/' + output_vy_vrt_name)  # get rid of the temporary vrt file now
-			if not(args.nlf):
-				log_output_lines.append('# using speed reference vx and vy data as well\n')
-		
-	else:  # this is in GREENLAND, where Landsat images and vref mosaic are in DIFFERENT PROJECTIONS and so vref components must be reprojected!
-		
-		# first - open the vv mosaic but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
-		tmp_speed_ref_orig=GeoImg_noload(args.speed_ref_filename,args.speed_ref_dir)
-		source = img1.srs		# the local UTM of the input image
-		target = tmp_speed_ref_orig.srs
-		# set up transform from local utm to PS of vel ref image, to calculate the corners of the vref mosaic covering this area
-		transform_utm_to_PS = osr.CoordinateTransformation(source, target)
-		# set up inv transform to that above to project the endpoints of each PS vx,vy vector to find local vref vy and vy in utm reference frame
-		inv_transform_PS_to_utm = osr.CoordinateTransformation(target, source)
+    source = img1.srs		# the local UTM of the L8 image
+    # 	target = osr.SpatialReference()   # to use .ImportFromEPSG you have to create an object first - not needed from image that has been opened with gdal
+    target = tmp_lgo_orig.srs
+    # 	target.ImportFromEPSG(102006) # Alaska Albers Conformal Conic
+    # 	target.ImportFromEPSG(3413) # PS
+    transform = osr.CoordinateTransformation(source, target)
 
-		# set up to sample speed_ref mz at chip centers - this will be used to find mask value at each point
-		# in L8 image local UTM, these are:
-		utm_ulx=output_array_ul_corner[0]
-		utm_uly=output_array_ul_corner[1]
-	# 	lrx=output_array_ul_corner[0] + (r_i_2.__len__() * inc * img1.pix_x_m)
-	# 	lry=output_array_ul_corner[1] + (r_j_2.__len__() * inc * img1.pix_y_m)
-		utm_lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
-		utm_lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
-	
-		#########################
-		# now we project output array corners from local UTM back to projection of speed_ref mz
-		(tulx, tuly, tulz ) = transform_utm_to_PS.TransformPoint( utm_ulx, utm_uly, 0.0 )
-		(turx, tury, turz ) = transform_utm_to_PS.TransformPoint( utm_lrx, utm_uly, 0.0 )
-		(tlrx, tlry, tlrz ) = transform_utm_to_PS.TransformPoint( utm_lrx, utm_lry, 0.0 )
-		(tllx, tlly, tllz ) = transform_utm_to_PS.TransformPoint( utm_ulx, utm_lry, 0.0 )
-		#####################
-		# Make .vrt for speed_ref image that is in local UTM to match Band 8 images 
-		# - will reproject speed_ref img in memory to local utm after reading in just this part of data - .vrt limits the read size...
-		#####################
-		ulx=np.min([tulx,tllx])
-		uly=np.max([tuly,tury])
-		lrx=np.max([turx,tlrx])
-		lry=np.min([tlly,tlry])
-	
-		sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vv_vrt_name), path_to_speed_ref_vv])  # import subprocess as sp
-		speed_ref_vv_cropped_geoimg=GeoImg_noload(output_vv_vrt_name,in_dir=args.VRT_dir)
-# AM I CORRECT (11/3/16)? that this next read served no purpose? commenting it out here to see...
-# 		speed_ref_vv_cropped_mask=speed_ref_vv_cropped_geoimg.gd.ReadAsArray().astype(np.float32)
-		if speed_ref_vv_cropped_geoimg.nodata_value:
-			speedref_vv_nodata=speed_ref_vv_cropped_geoimg.nodata_value
-		else:
-			speedref_vv_nodata=None
-		tmp_speed_ref_orig=None  # close GeoImg_noload object used on full original lgo_mask file, used to get srs above, but no input of data
-	
-		#####################
-		# now reproject cropped input mask into local UTM so speed_ref_vv can be used to identify
-		# pixels that shouldn't move
-		#####################
-		mem_drv = gdal.GetDriverByName( 'MEM' )
-		# 	inmem_lgo_mask_utm=mem_drv.CreateCopy('',in_vx.gd)   # actually don't need the data, but the rest is good
-		inmem_speed_ref_vv_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
-		inmem_speed_ref_vv_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
-		inmem_speed_ref_vv_utm.SetProjection ( img1.proj )
-		#############################################
-		# following is fix for mem driver not copying nodata pixels - set nodata value and fill band before reprojecting
-		# FROM: https://trac.osgeo.org/gdal/ticket/6404 or stackexchange links found there
-		#############################################
-		rb1=inmem_speed_ref_vv_utm.GetRasterBand(1)
-		rb1.SetNoDataValue(speedref_vv_nodata)
-		rb1.Fill(speedref_vv_nodata)
+    # set up to sample lgo_mask at chip centers - this will be used to find mask value at each point
+    # in L8 image local UTM, these are:
+    utm_ulx=output_array_ul_corner[0]
+    utm_uly=output_array_ul_corner[1]
+    # 	lrx=output_array_ul_corner[0] + (r_i_2.__len__() * inc * img1.pix_x_m)
+    # 	lry=output_array_ul_corner[1] + (r_j_2.__len__() * inc * img1.pix_y_m)
+    utm_lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
+    utm_lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
 
-		res = gdal.ReprojectImage( speed_ref_vv_cropped_geoimg.gd, inmem_speed_ref_vv_utm, speed_ref_vv_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
-		speedref_vel_vv=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
+    #########################
+    # now we project output array corners from local UTM back to projection of lgo_mask
+    # 	x_size = output_array_pix_x_m
+    # 	y_size = output_array_pix_y_m
+    # 	(tulx, tuly, tulz ) = transform.TransformPoint( in_vx.gt[0], in_vx.gt[3])
+    # 	(turx, tury, turz ) = transform.TransformPoint( in_vx.gt[0] + in_vx.gt[1]*x_size, in_vx.gt[3])
+    # 	(tlrx, tlry, tlrz ) = transform.TransformPoint( in_vx.gt[0] + in_vx.gt[1]*x_size, in_vx.gt[3] + in_vx.gt[5]*y_size )
+    # 	(tllx, tlly, tllz ) = transform.TransformPoint( in_vx.gt[0], in_vx.gt[3] + in_vx.gt[5]*y_size )
+    (tulx, tuly, tulz ) = transform.TransformPoint( utm_ulx, utm_uly, 0.0 )
+    (turx, tury, turz ) = transform.TransformPoint( utm_lrx, utm_uly, 0.0 )
+    (tlrx, tlry, tlrz ) = transform.TransformPoint( utm_lrx, utm_lry, 0.0 )
+    (tllx, tlly, tllz ) = transform.TransformPoint( utm_ulx, utm_lry, 0.0 )
+    #####################
+    # Make .vrt for lgo image that is in local UTM to match Band 8 images 
+    # - will reproject lgo mask in memory to local utm after reading in just this part of mask - .vrt limits the read size...
+    #####################
+    ulx=np.min([tulx,tllx])
+    uly=np.max([tuly,tury])
+    lrx=np.max([turx,tlrx])
+    lry=np.min([tlly,tlry])
 
-	
-		print('got speed_ref_vv data and reprojected to original image local utm')
-		if not(args.nlf):
-			log_output_lines.append('# got speed_ref_vv data and reprojected to original image local utm')
-			log_output_lines.append('# speed_ref_vv reference (speed_ref_vv mask file: %s) from speed_ref_vv vrt file: %s\n'%(path_to_speed_ref_vv,output_vv_vrt_name))
-		
-		if args.offset_correction_speedref:  # need to read and reproject vx and vy ref data as well...
-			path_to_speed_ref_vx = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vx')
-			path_to_speed_ref_vy = args.speed_ref_dir+ '/' + args.speed_ref_filename.replace('vv','vy')
-			output_vx_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vx.vrt'
-			output_vy_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'vy.vrt'
-			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vx_vrt_name), path_to_speed_ref_vx])  # import subprocess as sp
-			sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_vy_vrt_name), path_to_speed_ref_vy])  # import subprocess as sp
-			speed_ref_vx_cropped_geoimg=GeoImg_noload(output_vx_vrt_name,in_dir=args.VRT_dir)
-			speed_ref_vy_cropped_geoimg=GeoImg_noload(output_vy_vrt_name,in_dir=args.VRT_dir)
-			# reproject PS vx value into utm before converting to utm vx value
-			inmem_speed_ref_vx_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
-			inmem_speed_ref_vx_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
-			inmem_speed_ref_vx_utm.SetProjection ( img1.proj )
-			res = gdal.ReprojectImage( speed_ref_vx_cropped_geoimg.gd, inmem_speed_ref_vx_utm, speed_ref_vx_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
-			speedref_vel_PS_vx_in_utm=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
-			# reproject PS vy value into utm before converting to utm vy value
-			inmem_speed_ref_vy_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
-			inmem_speed_ref_vy_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
-			inmem_speed_ref_vy_utm.SetProjection ( img1.proj )
-			res = gdal.ReprojectImage( speed_ref_vy_cropped_geoimg.gd, inmem_speed_ref_vy_utm, speed_ref_vy_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
-			speedref_vel_PS_vy_in_utm=inmem_speed_ref_vv_utm.ReadAsArray().astype(np.float32)
-			# will convert the PSvx,PSvy components (at local utm centers already) to local utmvx,utmvy components to compare with feature tracking of local utm Landsat...
-			if speedref_vv_nodata:
-				speedref_vel_vx=np.ones_like(speedref_vel_vv) * speedref_vv_nodata
-				speedref_vel_vy=np.ones_like(speedref_vel_vv) * speedref_vv_nodata
-				pts=np.where(speedref_vel_vv!=speedref_vv_nodata)  # indices of points to reproject vx and vy
-			else:
-				speedref_vel_vx=np.zeros_like(speedref_vel_vv)
-				speedref_vel_vy=np.zeros_like(speedref_vel_vv)
-				pts=np.where((speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))  # indices of points to reproject vx and vy
-			for i,j in zip(*pts): # iterate over these points
-				PSvx=speedref_vel_PS_vx_in_utm[i,j]
-				PSvy=speedref_vel_PS_vy_in_utm[i,j]
-				UTMx,UTMy=chip_center_grid_xy[:,i,j]
-				(PSx,PSy,PSz) = transform_utm_to_PS.TransformPoint( UTMx, UTMy, 0.0 )
-				(UTMx_vec_end_point, UTMy_vec_end_point, UTMz_vec_end_point) = inv_transform_PS_to_utm.TransformPoint( PSx + PSvx, PSy + PSvy, PSz)
-				speedref_vel_vx[i,j] = UTMx_vec_end_point - UTMx
-				speedref_vel_vy[i,j] = UTMy_vec_end_point - UTMy
-		
-		os.remove(args.VRT_dir + '/' + output_vx_vrt_name)  # get rid of the temporary vrt file now
-		os.remove(args.VRT_dir + '/' + output_vy_vrt_name)  # get rid of the temporary vrt file now
-		os.remove(args.VRT_dir + '/' + output_vv_vrt_name)  # get rid of the temporary vrt file now
-##########################
-# commented these out for debugging driver issue - uncomment for production to free memory
-##########################
-# 		inmem_speed_ref_vv_utm=None
-# 		inmem_speed_ref_vx_utm=None
-# 		inmem_speed_ref_vy_utm=None
-		
-		print('got speed_ref_vx and vy data and reprojected to original image local utm')
-		if not(args.nlf):
-			log_output_lines.append('# got speed_ref_vx and vy data and reprojected to original image local utm')
-		
-	if psutil_available:
-		print('got speed_ref data - psutil reports process %s using '%(args.out_name_base),memory_usage_psutil())
-	if resource_available:
-		print('got speed_ref data - resource module reports process %s using '%(args.out_name_base),memory_usage_resource())
-	
-	
-	
-	
-	
-if args.offset_correction_lgo_mask:
-	# use land(1)-glacier(0)-ocean(2) mask to find land pixels for offset correction - means reprojecting mask into Landsat image's local UTM
-	#########################  Following code started from GRN_find_offset_reproject_to_PS_olg_mask_v3_fitWCS_ifnoland_multiprocess.py
-	# now make a .vrt of the area of the land/ocean/glacier mask image (so you only 
-	# have to read in a small part of the mask)
-	# original mask is in it's own projection 
-	# find local UTM corners of input, transform to mask's projection, set up .vrt of required area 
-	# from mask, read it in, warp in memory to local UTM, apply land mask to find
-	# pixels that should have had 0 vel, do offset correction
-	# seems like a long way around, but would like to have consistent dataset tied to original image
-	# Will need to reproject for mosaicking - may want to use a central UTM for each group of glaciers rather than ACC?
-	#########################
-	# first - open the lgo mask but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
-	tmp_lgo_orig=GeoImg_noload(args.lgo_mask_filename,args.lgo_mask_file_dir)
-	source = img1.srs		# the local UTM of the L8 image
-# 	target = osr.SpatialReference()   # to use .ImportFromEPSG you have to create an object first - not needed from image that has been opened with gdal
-	target = tmp_lgo_orig.srs
-# 	target.ImportFromEPSG(102006) # Alaska Albers Conformal Conic
-# 	target.ImportFromEPSG(3413) # PS
-	transform = osr.CoordinateTransformation(source, target)
+    path_to_lgo_mask = maskdir + '/' + maskfile    # yes we opened this above, but just for srs - this full path is for vrt file
+    output_lgo_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'lgo.vrt'
+    # -te needs xmin ymin xmax ymax - that is what is below, using the corners
+    sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_lgo_vrt_name), path_to_lgo_mask])  # import subprocess as sp
+    lgo_mask_cropped_geoimg=GeoImg_noload(output_lgo_vrt_name,in_dir=args.VRT_dir)
+    # AM I CORRECT (11/3/16)? that this next read served no purpose? commenting it out here to see...
+    # 	lgo_mask_cropped_mask=lgo_mask_cropped_geoimg.gd.ReadAsArray().astype(np.float32)
+    if lgo_mask_cropped_geoimg.nodata_value:
+        lgo_mask_nodata=lgo_mask_cropped_geoimg.nodata_value
+    else:
+        lgo_mask_nodata=None
+    os.remove(args.VRT_dir + '/' + output_lgo_vrt_name)  # get rid of the temporary vrt file now
+    tmp_lgo_orig=None  # close GeoImg_noload object used on full original lgo_mask file, used to get srs above, but no input of data
 
-	# set up to sample lgo_mask at chip centers - this will be used to find mask value at each point
-	# in L8 image local UTM, these are:
-	utm_ulx=output_array_ul_corner[0]
-	utm_uly=output_array_ul_corner[1]
-# 	lrx=output_array_ul_corner[0] + (r_i_2.__len__() * inc * img1.pix_x_m)
-# 	lry=output_array_ul_corner[1] + (r_j_2.__len__() * inc * img1.pix_y_m)
-	utm_lrx=output_array_ul_corner[0] + (output_array_num_pix_x * output_array_pix_x_m)
-	utm_lry=output_array_ul_corner[1] + (output_array_num_pix_y * output_array_pix_y_m)
-	
-	#########################
-	# now we project output array corners from local UTM back to projection of lgo_mask
-# 	x_size = output_array_pix_x_m
-# 	y_size = output_array_pix_y_m
-# 	(tulx, tuly, tulz ) = transform.TransformPoint( in_vx.gt[0], in_vx.gt[3])
-# 	(turx, tury, turz ) = transform.TransformPoint( in_vx.gt[0] + in_vx.gt[1]*x_size, in_vx.gt[3])
-# 	(tlrx, tlry, tlrz ) = transform.TransformPoint( in_vx.gt[0] + in_vx.gt[1]*x_size, in_vx.gt[3] + in_vx.gt[5]*y_size )
-# 	(tllx, tlly, tllz ) = transform.TransformPoint( in_vx.gt[0], in_vx.gt[3] + in_vx.gt[5]*y_size )
-	(tulx, tuly, tulz ) = transform.TransformPoint( utm_ulx, utm_uly, 0.0 )
-	(turx, tury, turz ) = transform.TransformPoint( utm_lrx, utm_uly, 0.0 )
-	(tlrx, tlry, tlrz ) = transform.TransformPoint( utm_lrx, utm_lry, 0.0 )
-	(tllx, tlly, tllz ) = transform.TransformPoint( utm_ulx, utm_lry, 0.0 )
-	#####################
-	# Make .vrt for lgo image that is in local UTM to match Band 8 images 
-	# - will reproject lgo mask in memory to local utm after reading in just this part of mask - .vrt limits the read size...
-	#####################
-	ulx=np.min([tulx,tllx])
-	uly=np.max([tuly,tury])
-	lrx=np.max([turx,tlrx])
-	lry=np.min([tlly,tlry])
-	
-	path_to_lgo_mask = args.lgo_mask_file_dir+ '/' + args.lgo_mask_filename    # yes we opened this above, but just for srs - this full path is for vrt file
-	output_lgo_vrt_name= 'tmp' + ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6)) + 'lgo.vrt'
-	# -te needs xmin ymin xmax ymax - that is what is below, using the corners
-	sp.call(["gdalbuildvrt", "-te", "%f"%ulx, "%f"%lry, "%f"%lrx, "%f"%uly, "-tr", "%9.4f"%(output_array_pix_x_m), "%9.4f"%(output_array_pix_x_m), "%s"%(args.VRT_dir + '/' + output_lgo_vrt_name), path_to_lgo_mask])  # import subprocess as sp
-	lgo_mask_cropped_geoimg=GeoImg_noload(output_lgo_vrt_name,in_dir=args.VRT_dir)
-# AM I CORRECT (11/3/16)? that this next read served no purpose? commenting it out here to see...
-# 	lgo_mask_cropped_mask=lgo_mask_cropped_geoimg.gd.ReadAsArray().astype(np.float32)
-	if lgo_mask_cropped_geoimg.nodata_value:
-		lgo_mask_nodata=lgo_mask_cropped_geoimg.nodata_value
-	else:
-		lgo_mask_nodata=None
-	os.remove(args.VRT_dir + '/' + output_lgo_vrt_name)  # get rid of the temporary vrt file now
-	tmp_lgo_orig=None  # close GeoImg_noload object used on full original lgo_mask file, used to get srs above, but no input of data
-	
-	#####################
-	# now reproject cropped input mask into local UTM so land mask can be used to identify
-	# pixels that shouldn't move
-	#####################
-	mem_drv = gdal.GetDriverByName( 'MEM' )
-	# 	inmem_lgo_mask_utm=mem_drv.CreateCopy('',in_vx.gd)   # actually don't need the data, but the rest is good
-	inmem_lgo_mask_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
-	inmem_lgo_mask_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
-	inmem_lgo_mask_utm.SetProjection ( img1.proj )
-	res = gdal.ReprojectImage( lgo_mask_cropped_geoimg.gd, inmem_lgo_mask_utm, lgo_mask_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
-	lgo_mask_image_utm=inmem_lgo_mask_utm.ReadAsArray().astype(np.byte)
-		
-	
-	print('got lgo mask data and reprojected to original image local utm')
-	if not(args.nlf):
-		log_output_lines.append('# got lgo mask data and reprojected to original image local utm')
-		log_output_lines.append('# lgo mask reference (lgo mask file: %s) from lgo mask vrt file: %s\n'%(path_to_lgo_mask,output_lgo_vrt_name))
+    #####################
+    # now reproject cropped input mask into local UTM so land mask can be used to identify
+    # pixels that shouldn't move
+    #####################
+    mem_drv = gdal.GetDriverByName( 'MEM' )
+    # 	inmem_lgo_mask_utm=mem_drv.CreateCopy('',in_vx.gd)   # actually don't need the data, but the rest is good
+    inmem_lgo_mask_utm = mem_drv.Create('', output_array_num_pix_x, output_array_num_pix_y, 1, gdal.GDT_Float32)
+    inmem_lgo_mask_utm.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) #
+    inmem_lgo_mask_utm.SetProjection ( img1.proj )
+    res = gdal.ReprojectImage( lgo_mask_cropped_geoimg.gd, inmem_lgo_mask_utm, lgo_mask_cropped_geoimg.srs.ExportToWkt(), img1.srs.ExportToWkt(), gdal.GRA_NearestNeighbour )
+    lgo_mask_image_utm=inmem_lgo_mask_utm.ReadAsArray().astype(np.byte)
+    
+    print('got lgo mask data and reprojected to original image local utm')
+    if not(args.nlf):
+        log_output_lines.append('# got lgo mask data and reprojected to original image local utm')
+        log_output_lines.append('# lgo mask reference (lgo mask file: %s) from lgo mask vrt file: %s\n'%(path_to_lgo_mask,output_lgo_vrt_name))
 
 
 
@@ -1089,25 +1098,26 @@ for i in range(min_ind_i,max_ind_i+1):
 # 			test_for_masked_pix=np.min(chip_src)
 		if(test_for_masked_pix):  # all valid pixels in source chip - proceed
 			numcorr+=1
-			if not(args.no_speed_ref):
-				speedrefvel=speedref_vel_vv[j][i]
-				if speedref_vv_nodata:
-					if (speedrefvel==speedref_vv_nodata):
-# 						speedrefvel=0.0
-						speedrefvel=args.nodatavmax # (will be reset to give half_target_chip below)
-				elif ((speedrefvel < 0.0) or (speedrefvel == np99p0)):  
-# 					speedrefvel = 0.0  # less than zero would be no data - but do it anyway right now.
-					speedrefvel = args.nodatavmax  # less than zero would be no data and something (LISA?) at some point used 99.0 for no data - will be reset to give half_target_chip below)
-# 				vmax=1.5 * speedrefvel / 365.25  # wcs speeds are in m/yr... we need m/day  And, allow for 50% greater speed... plus a few pixels
-				vmax=1.5 * speedrefvel #  LISA in m/day  And, allow for 50% greater speed...
-				maxpixoffset = np.int(np.ceil(vmax * del_t_days / img1.pix_x_m))  # changed to make result integer because of future subscript warning on line 895
-				new_half_target_chip = half_source_chip + maxpixoffset + 5 # set target chip size to a few more than (1.5 * max v * interval)/pixsize
-				if new_half_target_chip > half_target_chip:
-					new_half_target_chip = half_target_chip   # max target chip size is specified half_target_chip - this ensures we stay in the image... (half_target_chip value was used in setting bounding box)
-				new_cent_loc=new_half_target_chip-half_source_chip  # offset found in cv2 is referenced to returned array chip center, which has size full_source_chip - full_target_chip - so center is dif of half sizes.
-# 				print wcs_vel.img[j][i],vmax,maxpixoffset,new_half_target_chip
-				chip_tar=img2_src_arr[(r_j_2[j]-new_half_target_chip):(r_j_2[j]+new_half_target_chip),(r_i_2[i]-new_half_target_chip):(r_i_2[i]+new_half_target_chip)].astype(np.float32)
-			elif args.offset_correction_lgo_mask and args.lgo_mask_limit_land_offset and (lgo_mask_image_utm[j][i]>=1):		# if there is a land mask and this particular source chip location is "land" (or ocean (2)), then make small search size (how far can land move?)
+# 			if not(args.no_speed_ref):
+# 				speedrefvel=speedref_vel_vv[j][i]
+# 				if speedref_vv_nodata:
+# 					if (speedrefvel==speedref_vv_nodata):
+# # 						speedrefvel=0.0
+# 						speedrefvel=args.nodatavmax # (will be reset to give half_target_chip below)
+# 				elif ((speedrefvel < 0.0) or (speedrefvel == np99p0)):  
+# # 					speedrefvel = 0.0  # less than zero would be no data - but do it anyway right now.
+# 					speedrefvel = args.nodatavmax  # less than zero would be no data and something (LISA?) at some point used 99.0 for no data - will be reset to give half_target_chip below)
+# # 				vmax=1.5 * speedrefvel / 365.25  # wcs speeds are in m/yr... we need m/day  And, allow for 50% greater speed... plus a few pixels
+# 				vmax=1.5 * speedrefvel #  LISA in m/day  And, allow for 50% greater speed...
+# 				maxpixoffset = np.int(np.ceil(vmax * del_t_days / img1.pix_x_m))  # changed to make result integer because of future subscript warning on line 895
+# 				new_half_target_chip = half_source_chip + maxpixoffset + 5 # set target chip size to a few more than (1.5 * max v * interval)/pixsize
+# 				if new_half_target_chip > half_target_chip:
+# 					new_half_target_chip = half_target_chip   # max target chip size is specified half_target_chip - this ensures we stay in the image... (half_target_chip value was used in setting bounding box)
+# 				new_cent_loc=new_half_target_chip-half_source_chip  # offset found in cv2 is referenced to returned array chip center, which has size full_source_chip - full_target_chip - so center is dif of half sizes.
+# # 				print wcs_vel.img[j][i],vmax,maxpixoffset,new_half_target_chip
+# 				chip_tar=img2_src_arr[(r_j_2[j]-new_half_target_chip):(r_j_2[j]+new_half_target_chip),(r_i_2[i]-new_half_target_chip):(r_i_2[i]+new_half_target_chip)].astype(np.float32)
+# 			elif args.offset_correction_lgo_mask and args.lgo_mask_limit_land_offset and (lgo_mask_image_utm[j][i]>=1):		# if there is a land mask and this particular source chip location is "land" (or ocean (2)), then make small search size (how far can land move?)
+			if args.offset_correction_lgo_mask and args.lgo_mask_limit_land_offset and (lgo_mask_image_utm[j][i]>=1):		# if there is a land mask and this particular source chip location is "land" (or ocean (2)), then make small search size (how far can land move?)
 				new_half_target_chip = half_source_chip + 5 # set target chip size to 5 more than source chip size - image to image offset with no motion should not be larger than this...
 				if new_half_target_chip > half_target_chip:
 					new_half_target_chip = half_target_chip   # max target chip size is specified half_target_chip - this ensures we stay in the image... (half_target_chip value was used in setting bounding box)
@@ -1272,7 +1282,8 @@ found_valid_bilinear_offset=False # flag that will be used below to decide to ap
 offset_correction_type_applied=''
 offset_correction_type_descritption=''
 
-if args.offset_correction_speedref or args.offset_correction_lgo_mask:
+# if args.offset_correction_speedref or args.offset_correction_lgo_mask:
+if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
 	# place holder flags for the different types of possible offsets - defines variable to prevent errors in if X: statements
 	zspeed_offset_available=None
 	midspeed_offset_available=None
@@ -1307,140 +1318,140 @@ if args.offset_correction_speedref or args.offset_correction_lgo_mask:
 	delcorr_min_for_offset = 0.15
 
 	
-	if args.offset_correction_speedref:
-		print('attempting to find offset correction for slow areas')
-		# 	slow_area_zero_speed_pixels=(del_t_days*slow_area_zero_speed_md)/img1.pix_x_m
-		# 	slow_area_max_vector_speed_pixels=(del_t_days*slow_area_max_vector_speed_md)/img1.pix_x_m
-		# 	if args.wcs=="":
-		# 		print 'offset_correction requires -wcs use, exiting...'
-		# 		sys.exit(-1)
-		# 	else:
-		# 		##########  find offset correction and make new output images...
-		# 		# del_t_val=32.0  set from input images...
-		# 		# make masked arrays of offsets, and pull wcs speeds for the unmasked points to find slow areas to correct image offsets to 0
-		
-		# first - 
-		# Develop Haran-type filters for isolated points/sd limits if not isolated - using the speeds tracked here.  Then apply the masks to the masked i and j offsets above, and find estimated i and j offset corrections 
-		# for the two (zero and slow) areas by combining the two masks and determining offsets from remaining pixels.  This approach is conservative in that it rejects a lot of data - hoping to make offsets accurate.
-		#
-		prelim_vv=((offset_dist_ij_arr*img1.pix_x_m)/del_t_val)
-		prelim_vv_ma=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset),prelim_vv)
-
-		ijnotmasked=np.where(prelim_vv_ma.mask==False)    # mask is true where masked, valid data where false
-
-		std_vv_ratio=np.zeros_like(prelim_vv)
-
-		min_std_allowed = 0.001  # prevents division by zero if all velocities in neighborhood are identical, which would be really suspicious anyway.. Haran used 0.01
-
-		for cpi,cpj in zip(ijnotmasked[0],ijnotmasked[1]):
-			i_s=[cpi-1,cpi-1,cpi-1,cpi,cpi,cpi+1,cpi+1,cpi+1]
-			j_s=[cpj-1,cpj,cpj+1,cpj-1,cpj+1,cpj-1,cpj,cpj+1]
-			nn=np.sum(prelim_vv_ma[(i_s,j_s)].mask==False)
-			if nn>1:
-				cpstd=np.std(prelim_vv_ma[(i_s,j_s)])
-				if cpstd > min_std_allowed:
-					delv=prelim_vv_ma[cpi,cpj]-np.mean(prelim_vv_ma[(i_s,j_s)])
-					std_vv_ratio[cpi,cpj]= np.abs(delv)/cpstd
-				else:
-					std_vv_ratio[cpi,cpj]=0.0
-			elif nn==1:
-				if np.abs(prelim_vv_ma[cpi,cpj]-np.mean(prelim_vv_ma[(i_s,j_s)])) < 1.0:
-					std_vv_ratio[cpi,cpj]=1.0  # set so this point survives the mask at the end (std_vv_ratio <= 3.0) - Haran used points with single neighbors that were within a m/d
-				else:
-					std_vv_ratio[cpi,cpj]=0.0
-			else:
-				std_vv_ratio[cpi,cpj]=0.0
-
-		prelim_vv_ma2=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | (std_vv_ratio==0.0) | (std_vv_ratio > 3.0), prelim_vv)
-
-		# second - find pixels where speed ref is below slow_area_zero_speed_md
-		if speedref_vv_nodata:  # input speed reference has a specified no_data value.
-			zspeed_d_i_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==speedref_vv_nodata)|(del_i==0.0)|(prelim_vv_ma2.mask==True),del_i)
-			zspeed_d_j_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==speedref_vv_nodata)|(del_j==0.0)|(prelim_vv_ma2.mask==True),del_j)
-			zspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)))
-			zspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
-		else:
-			zspeed_d_i_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|(del_i==0.0)|(prelim_vv_ma2.mask==True),del_i)
-			zspeed_d_j_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|(del_j==0.0)|(prelim_vv_ma2.mask==True),del_j)
-			zspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)))
-			zspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
-		# third - find pixels where speed ref is between slow_area_zero_speed_md and slow_area_max_vector_speed_md
-		
-		#########################################################################################################
-		#### THIS WAS NOT CORRECT FOR RUNS BEFORE 11/6/2016 - midspeed top cutoff was misapplied - masked speeds less than top cutoff, rather than greater. 
-		#### 
-		#########################################################################################################
-		
-############################################		
-#	This was the code prior to v5p8 - now midspeed includes all speeds down to zero, not down to the zero_speed cutoff.  Vector matching can include the slow speeds.
-#
-# 		if speedref_vv_nodata:
-# 			midspeed_d_i_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
-# 											  (speedref_vel_vv==speedref_vv_nodata)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
-# 			midspeed_d_j_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
-# 											  (speedref_vel_vv==speedref_vv_nodata)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
-# 			midspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0), dtype=np.bool))
-# 			midspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
+# 	if args.offset_correction_speedref:# 
+# 		print('attempting to find offset correction for slow areas')
+# 		# 	slow_area_zero_speed_pixels=(del_t_days*slow_area_zero_speed_md)/img1.pix_x_m
+# 		# 	slow_area_max_vector_speed_pixels=(del_t_days*slow_area_max_vector_speed_md)/img1.pix_x_m
+# 		# 	if args.wcs=="":
+# 		# 		print 'offset_correction requires -wcs use, exiting...'
+# 		# 		sys.exit(-1)
+# 		# 	else:
+# 		# 		##########  find offset correction and make new output images...
+# 		# 		# del_t_val=32.0  set from input images...
+# 		# 		# make masked arrays of offsets, and pull wcs speeds for the unmasked points to find slow areas to correct image offsets to 0
+# 		
+# 		# first - 
+# 		# Develop Haran-type filters for isolated points/sd limits if not isolated - using the speeds tracked here.  Then apply the masks to the masked i and j offsets above, and find estimated i and j offset corrections 
+# 		# for the two (zero and slow) areas by combining the two masks and determining offsets from remaining pixels.  This approach is conservative in that it rejects a lot of data - hoping to make offsets accurate.
+# 		#
+# 		prelim_vv=((offset_dist_ij_arr*img1.pix_x_m)/del_t_val)
+# 		prelim_vv_ma=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset),prelim_vv)
+# 
+# 		ijnotmasked=np.where(prelim_vv_ma.mask==False)    # mask is true where masked, valid data where false
+# 
+# 		std_vv_ratio=np.zeros_like(prelim_vv)
+# 
+# 		min_std_allowed = 0.001  # prevents division by zero if all velocities in neighborhood are identical, which would be really suspicious anyway.. Haran used 0.01
+# 
+# 		for cpi,cpj in zip(ijnotmasked[0],ijnotmasked[1]):
+# 			i_s=[cpi-1,cpi-1,cpi-1,cpi,cpi,cpi+1,cpi+1,cpi+1]
+# 			j_s=[cpj-1,cpj,cpj+1,cpj-1,cpj+1,cpj-1,cpj,cpj+1]
+# 			nn=np.sum(prelim_vv_ma[(i_s,j_s)].mask==False)
+# 			if nn>1:
+# 				cpstd=np.std(prelim_vv_ma[(i_s,j_s)])
+# 				if cpstd > min_std_allowed:
+# 					delv=prelim_vv_ma[cpi,cpj]-np.mean(prelim_vv_ma[(i_s,j_s)])
+# 					std_vv_ratio[cpi,cpj]= np.abs(delv)/cpstd
+# 				else:
+# 					std_vv_ratio[cpi,cpj]=0.0
+# 			elif nn==1:
+# 				if np.abs(prelim_vv_ma[cpi,cpj]-np.mean(prelim_vv_ma[(i_s,j_s)])) < 1.0:
+# 					std_vv_ratio[cpi,cpj]=1.0  # set so this point survives the mask at the end (std_vv_ratio <= 3.0) - Haran used points with single neighbors that were within a m/d
+# 				else:
+# 					std_vv_ratio[cpi,cpj]=0.0
+# 			else:
+# 				std_vv_ratio[cpi,cpj]=0.0
+# 
+# 		prelim_vv_ma2=np.ma.masked_where((corr_arr==corr_nodata_val) | (del_corr_arr < delcorr_min_for_offset) | (corr_arr < corr_val_for_offset) | (std_vv_ratio==0.0) | (std_vv_ratio > 3.0), prelim_vv)
+# 
+# 		# second - find pixels where speed ref is below slow_area_zero_speed_md
+# 		if speedref_vv_nodata:  # input speed reference has a specified no_data value.
+# 			zspeed_d_i_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==speedref_vv_nodata)|(del_i==0.0)|(prelim_vv_ma2.mask==True),del_i)
+# 			zspeed_d_j_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==speedref_vv_nodata)|(del_j==0.0)|(prelim_vv_ma2.mask==True),del_j)
+# 			zspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)))
+# 			zspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
 # 		else:
-# 			midspeed_d_i_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# 			zspeed_d_i_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|(del_i==0.0)|(prelim_vv_ma2.mask==True),del_i)
+# 			zspeed_d_j_m=np.ma.masked_where((speedref_vel_vv>=slow_area_zero_speed_md)|(speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|(del_j==0.0)|(prelim_vv_ma2.mask==True),del_j)
+# 			zspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)))
+# 			zspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
+# 		# third - find pixels where speed ref is between slow_area_zero_speed_md and slow_area_max_vector_speed_md
+# 		
+# 		#########################################################################################################
+# 		#### THIS WAS NOT CORRECT FOR RUNS BEFORE 11/6/2016 - midspeed top cutoff was misapplied - masked speeds less than top cutoff, rather than greater. 
+# 		#### 
+# 		#########################################################################################################
+# 		
+# ############################################		
+# #	This was the code prior to v5p8 - now midspeed includes all speeds down to zero, not down to the zero_speed cutoff.  Vector matching can include the slow speeds.
+# #
+# # 		if speedref_vv_nodata:
+# # 			midspeed_d_i_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# # 											  (speedref_vel_vv==speedref_vv_nodata)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
+# # 			midspeed_d_j_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# # 											  (speedref_vel_vv==speedref_vv_nodata)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
+# # 			midspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0), dtype=np.bool))
+# # 			midspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
+# # 		else:
+# # 			midspeed_d_i_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# # 											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
+# # 			midspeed_d_j_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# # 											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
+# # 			midspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0), dtype=np.bool))
+# # 			midspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
+# ############################################
+# 
+# 		if speedref_vv_nodata:
+# 			midspeed_d_i_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# 											  (speedref_vel_vv==speedref_vv_nodata)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
+# 			midspeed_d_j_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# 											  (speedref_vel_vv==speedref_vv_nodata)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
+# 			midspeed_num_possible_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)))
+# 			midspeed_num_valid_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
+# 		else:
+# 			midspeed_d_i_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
 # 											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
-# 			midspeed_d_j_m=np.ma.masked_where((speedref_vel_vv<slow_area_zero_speed_md)|(slow_area_max_vector_speed_md<speedref_vel_vv)| \
+# 			midspeed_d_j_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
 # 											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
-# 			midspeed_num_possible_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0), dtype=np.bool))
-# 			midspeed_num_valid_pix=np.count_nonzero(np.array((speedref_vel_vv>=slow_area_zero_speed_md)&(slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False), dtype=np.bool))
-############################################
-
-		if speedref_vv_nodata:
-			midspeed_d_i_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
-											  (speedref_vel_vv==speedref_vv_nodata)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
-			midspeed_d_j_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
-											  (speedref_vel_vv==speedref_vv_nodata)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
-			midspeed_num_possible_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)))
-			midspeed_num_valid_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=speedref_vv_nodata)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
-		else:
-			midspeed_d_i_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
-											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_i==0.0))|(prelim_vv_ma2.mask==True),del_i)
-			midspeed_d_j_m=np.ma.masked_where((slow_area_max_vector_speed_md<speedref_vel_vv)| \
-											  (speedref_vel_vv==0.0)|(speedref_vel_vv==-99.0)|((del_j==0.0))|(prelim_vv_ma2.mask==True),del_j)
-			midspeed_num_possible_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)))
-			midspeed_num_valid_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
-
-
-
-		# fourth - generate offsets for both speed categories
-		# 	zspeed_num_valid_pix=len(zspeed_d_i_m.compressed())
-		if zspeed_num_valid_pix>0:
-			zspeed_offset_i = -(np.median(zspeed_d_i_m.compressed()))
-			zspeed_offset_j = -(np.median(zspeed_d_j_m.compressed()))
-			zspeed_offset_available=True
-
-		# 	midspeed_num_valid_pix=len(midspeed_d_i_m.compressed())
-		#########################################################################################################
-		#### THIS WAS NOT CORRECT FOR RUNS BEFORE 8/26/2016 - should have scaled the ref vx and vy by del_t_days to get total offset in i or j pixels, but omitted the del_t_days term, so just one day's motion subtracted... oops! 
-		#### this should have been an issue with Antarctic data processed with sc_pycorr before the reprocessing of October 2016, which was the whole dataset and should replace the earlier data with any issues from this omission.
-		#########################################################################################################
-		if midspeed_num_valid_pix>0:
-			midspeed_offset_i = -(np.median((midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)).compressed()))
-# 			midspeed_offset_j = -(np.median((midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)).compressed()))
-			midspeed_offset_j = -(np.median((midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_y_m)).compressed()))
-			midspeed_offset_available=True
-
-		if zspeed_num_valid_pix>0:
-			print('found zero_speed offset correction (del_i: %f del_j: %f) in slow moving areas (less than %f m/yr) using %d pixels out of %d possible'%\
-					(zspeed_offset_i,zspeed_offset_j,slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix))
-		if midspeed_num_valid_pix>0:
-			print('found mid_speed offset correction (del_i: %f del_j: %f) in slow moving areas (more than %f m/yr and less than %f m/yr) using %d pixels out of %d possible'%\
-					(midspeed_offset_i,midspeed_offset_j,slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix))
-		if not(args.nlf):
-			if zspeed_num_valid_pix>0:
-				t_log('found zero_speed offset correction (del_i: %f del_j: %f) in slow moving areas (less than %f m/yr) using %d pixels out of %d possible (%f %%)'%\
-					(zspeed_offset_i,zspeed_offset_j,slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix,100.0*(zspeed_num_valid_pix/float(zspeed_num_possible_pix))),outlogdisabled=args.nlf)
-			if midspeed_num_valid_pix>0:
-				t_log('found mid_speed offset correction (del_i: %f del_j: %f) in slow moving areas (more than %f m/yr and less than %f m/yr) using %d pixels out of %d possible (%f %%)'%\
-				(midspeed_offset_i,midspeed_offset_j,slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix,100.0*(midspeed_num_valid_pix/float(midspeed_num_possible_pix))),outlogdisabled=args.nlf)
+# 			midspeed_num_possible_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)))
+# 			midspeed_num_valid_pix=np.count_nonzero(np.array((slow_area_max_vector_speed_md>=speedref_vel_vv)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0)&(del_i!=0.0)&(prelim_vv_ma2.mask==False)))
+# 
+# 
+# 
+# 		# fourth - generate offsets for both speed categories
+# 		# 	zspeed_num_valid_pix=len(zspeed_d_i_m.compressed())
+# 		if zspeed_num_valid_pix>0:
+# 			zspeed_offset_i = -(np.median(zspeed_d_i_m.compressed()))
+# 			zspeed_offset_j = -(np.median(zspeed_d_j_m.compressed()))
+# 			zspeed_offset_available=True
+# 
+# 		# 	midspeed_num_valid_pix=len(midspeed_d_i_m.compressed())
+# 		#########################################################################################################
+# 		#### THIS WAS NOT CORRECT FOR RUNS BEFORE 8/26/2016 - should have scaled the ref vx and vy by del_t_days to get total offset in i or j pixels, but omitted the del_t_days term, so just one day's motion subtracted... oops! 
+# 		#### this should have been an issue with Antarctic data processed with sc_pycorr before the reprocessing of October 2016, which was the whole dataset and should replace the earlier data with any issues from this omission.
+# 		#########################################################################################################
+# 		if midspeed_num_valid_pix>0:
+# 			midspeed_offset_i = -(np.median((midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)).compressed()))
+# # 			midspeed_offset_j = -(np.median((midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)).compressed()))
+# 			midspeed_offset_j = -(np.median((midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_y_m)).compressed()))
+# 			midspeed_offset_available=True
+# 
+# 		if zspeed_num_valid_pix>0:
+# 			print('found zero_speed offset correction (del_i: %f del_j: %f) in slow moving areas (less than %f m/yr) using %d pixels out of %d possible'%\
+# 					(zspeed_offset_i,zspeed_offset_j,slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix))
+# 		if midspeed_num_valid_pix>0:
+# 			print('found mid_speed offset correction (del_i: %f del_j: %f) in slow moving areas (more than %f m/yr and less than %f m/yr) using %d pixels out of %d possible'%\
+# 					(midspeed_offset_i,midspeed_offset_j,slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix))
+# 		if not(args.nlf):
+# 			if zspeed_num_valid_pix>0:
+# 				t_log('found zero_speed offset correction (del_i: %f del_j: %f) in slow moving areas (less than %f m/yr) using %d pixels out of %d possible (%f %%)'%\
+# 					(zspeed_offset_i,zspeed_offset_j,slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix,100.0*(zspeed_num_valid_pix/float(zspeed_num_possible_pix))),outlogdisabled=args.nlf)
+# 			if midspeed_num_valid_pix>0:
+# 				t_log('found mid_speed offset correction (del_i: %f del_j: %f) in slow moving areas (more than %f m/yr and less than %f m/yr) using %d pixels out of %d possible (%f %%)'%\
+# 				(midspeed_offset_i,midspeed_offset_j,slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix,100.0*(midspeed_num_valid_pix/float(midspeed_num_possible_pix))),outlogdisabled=args.nlf)
 
 
-	if args.offset_correction_lgo_mask:   # before 5p6 this was an elif - but now do this section even if you did the last, so both can be combined below if successful
+	if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:   # before 5p6 this was an elif - but now do this section even if you did the last, so both can be combined below if successful
 		print('attempting to find offset correction for land (lgo mask) areas')
 		# mask pixels that are not land not(lgo==1)
 		if lgo_mask_nodata:  # input speed reference has a specified no_data value.
@@ -1479,217 +1490,218 @@ if args.offset_correction_speedref or args.offset_correction_lgo_mask:
 			# bilinear offset correction - if you have enough valid pixels
 			##############################################################
 			# lgo_bilinear_masked_offset_available=False
-			if args.offset_correction_bilinear_fit and (lgo_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
-				lgo_bilinear_masked_offset_available=True
-				ix,iy=lgo_masked_d_i_m.nonzero()
-				coefs_i=polyfit2d(ix, iy, lgo_masked_d_i_m[ix,iy], [1,1])
-				coefs_j=polyfit2d(ix, iy, lgo_masked_d_j_m[ix,iy], [1,1])
-				Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
-				lgo_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
-				lgo_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
+# 			if args.offset_correction_bilinear_fit and (lgo_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
+# 				lgo_bilinear_masked_offset_available=True
+# 				ix,iy=lgo_masked_d_i_m.nonzero()
+# 				coefs_i=polyfit2d(ix, iy, lgo_masked_d_i_m[ix,iy], [1,1])
+# 				coefs_j=polyfit2d(ix, iy, lgo_masked_d_j_m[ix,iy], [1,1])
+# 				Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
+# 				lgo_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
+# 				lgo_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
 
 
-	if args.Greenland:
-		######################################################################################################################################################
-		# special case for GREENLAND where both velocity field and lgo mask can be used together to calculate offset - otherwise use only one or none below...
-		######################################################################################################################################################
-		# if args.offset_correction_speedref and args.offset_correction_lgo_mask:  could do this, but actually at this point have enough info to do this:
-		if zspeed_offset_available and lgo_masked_offset_available:
-			print('attempting to find offset correction for combined slow and land masked areas')
-			# did mask these above, but now need to do the combined mask because some points will be in both masks...
-			full_stationary_point_mask = lgo_masked_d_i_m.mask & zspeed_d_i_m.mask
-			full_stationary_point_mask_masked_d_i_m=np.ma.masked_where(full_stationary_point_mask,del_i)
-			full_stationary_point_mask_masked_d_j_m=np.ma.masked_where(full_stationary_point_mask,del_j)
-
-			if speedref_vv_nodata and lgo_mask_nodata:  # input speed reference has a specified no_data value, and lgo mask does as well...
-				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(lgo_mask_image_utm!=lgo_mask_nodata)))&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))
-			elif speedref_vv_nodata:
-				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|(lgo_mask_image_utm==1))&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))
-			else:
-				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))|(lgo_mask_image_utm==1))&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))
-																			  
-			full_stationary_masked_num_valid_pix=np.count_nonzero(np.array(full_stationary_point_mask==False))
-
-	# 		full_stationary_masked_offset_available=False
-			if full_stationary_masked_num_valid_pix>0:
-				full_stationary_masked_offset_i = -(np.median(full_stationary_point_mask_masked_d_i_m.compressed()))
-				full_stationary_masked_offset_j = -(np.median(full_stationary_point_mask_masked_d_j_m.compressed()))
-				full_stationary_masked_stdev_i = np.std(full_stationary_point_mask_masked_d_i_m.compressed())
-				full_stationary_masked_stdev_j = np.std(full_stationary_point_mask_masked_d_j_m.compressed())
-				full_stationary_masked_offset_available=True
-
-				print('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
-						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix))
-				if not(args.nlf):
-					if full_stationary_masked_num_valid_pix>0:
-						t_log('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
-						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix),outlogdisabled=args.nlf)
-			
-				##############################################################
-				# bilinear offset correction - if you have enough valid pixels
-				##############################################################
-				full_stationary_bilinear_masked_offset_available=False
-				if args.offset_correction_bilinear_fit and (full_stationary_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
-					full_stationary_bilinear_masked_offset_available=True
-					ix,iy=full_stationary_point_mask_masked_d_i_m.nonzero()
-					coefs_i=polyfit2d(ix, iy, full_stationary_point_mask_masked_d_i_m[ix,iy], [1,1])
-					coefs_j=polyfit2d(ix, iy, full_stationary_point_mask_masked_d_j_m[ix,iy], [1,1])
-					Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
-					full_stationary_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
-					full_stationary_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
-
-
-
-		######################################################################################################################################################
-		# SECOND part of special case for GREENLAND where both velocity field and lgo mask can be used together to calculate offset - otherwise use only one or none below...
-		#  this combines land and medium and low speed pixels through vector fits to find offsets
-		######################################################################################################################################################
-		# if args.offset_correction_speedref and args.offset_correction_lgo_mask:  could do this, but actually at this point have enough info to do this:
-		if (midspeed_offset_available or (midspeed_offset_available and zspeed_offset_available)) and lgo_masked_offset_available:
-			print('attempting to find vector-tied offset correction for combined medium, low and land masked areas')
-			# did mask these above, but now need to do the combined mask because some points will be in both masks...
-		
-			# make sure vv ref mz speeds over land have zero i and j components, then find vector field offsets
-			# ok to do this here because it is the last use of speedref_ vector components - only speedref_vel_vv used elsewhere below?
-			if speedref_vv_nodata and (speedref_vv_nodata!=0.0):
-				speedref_vel_vx[lgo_mask_image_utm==1]=0.0
-				speedref_vel_vy[lgo_mask_image_utm==1]=0.0
-				speedref_vel_vv[lgo_mask_image_utm==1]=0.0
-			else:
-				speedref_vel_vx[lgo_mask_image_utm==1]=0.000000001
-				speedref_vel_vy[lgo_mask_image_utm==1]=0.000000001   # zero might be nodata - is tested that way below if speedref_vv_nodata not set?
-				speedref_vel_vv[lgo_mask_image_utm==1]=0.000000001
-
-			full_vector_point_mask = lgo_masked_d_i_m.mask & zspeed_d_i_m.mask & midspeed_d_i_m.mask
-		
-		
-	# 		if speedref_vv_nodata:
-	# 			full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
-	# 			full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)))
-	# 		else:
-	# 			full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
-	# 			full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)))
-			if speedref_vv_nodata:
-				full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(del_i - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
-				full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(del_j - (del_t_days*speedref_vel_vy/img1.pix_y_m)))
-			else:
-				full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(del_i - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
-				full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(del_j - (del_t_days*speedref_vel_vy/img1.pix_y_m)))
-
-			if speedref_vv_nodata and lgo_mask_nodata:  # input speed reference has a specified no_data value, and lgo mask does as well...
-				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))))
-			elif speedref_vv_nodata:
-				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))))
-			else:
-				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
-																				  (corr_arr!=corr_nodata_val)))))
-																			  
-			full_vector_masked_num_valid_pix=np.count_nonzero(np.array(full_vector_point_mask==False))
-
-	# 		full_vector_masked_offset_available=False
-			if full_vector_masked_num_valid_pix>0:
-				full_vector_masked_offset_i = -(np.median(full_vector_point_mask_masked_d_i_m.compressed()))
-				full_vector_masked_offset_j = -(np.median(full_vector_point_mask_masked_d_j_m.compressed()))
-				full_vector_masked_stdev_i = np.std(full_vector_point_mask_masked_d_i_m.compressed())
-				full_vector_masked_stdev_j = np.std(full_vector_point_mask_masked_d_j_m.compressed())
-				full_vector_masked_offset_available=True
-
-				print('found full_vector_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
-						(full_vector_masked_offset_i,full_vector_masked_offset_j,full_vector_masked_stdev_i,full_vector_masked_stdev_j,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix))
-				if not(args.nlf):
-					if full_vector_masked_num_valid_pix>0:
-						t_log('found full_vector_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
-						(full_vector_masked_offset_i,full_vector_masked_offset_j,full_vector_masked_stdev_i,full_vector_masked_stdev_j,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix),outlogdisabled=args.nlf)
-			
-				##############################################################
-				# bilinear offset correction - if you have enough valid pixels
-				##############################################################
-				full_vector_bilinear_masked_offset_available=False
-				if args.offset_correction_bilinear_fit and (full_vector_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
-					full_vector_bilinear_masked_offset_available=True
-					ix,iy=full_vector_point_mask_masked_d_i_m.nonzero()
-					coefs_i=polyfit2d(ix, iy, full_vector_point_mask_masked_d_i_m[ix,iy], [1,1])
-					coefs_j=polyfit2d(ix, iy, full_vector_point_mask_masked_d_j_m[ix,iy], [1,1])
-					Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
-					full_vector_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
-					full_vector_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
-
-
+# 	if args.Greenland:
+# 		######################################################################################################################################################
+# 		# special case for GREENLAND where both velocity field and lgo mask can be used together to calculate offset - otherwise use only one or none below...
+# 		######################################################################################################################################################
+# 		# if args.offset_correction_speedref and args.offset_correction_lgo_mask:  could do this, but actually at this point have enough info to do this:
+# 		if zspeed_offset_available and lgo_masked_offset_available:
+# 			print('attempting to find offset correction for combined slow and land masked areas')
+# 			# did mask these above, but now need to do the combined mask because some points will be in both masks...
+# 			full_stationary_point_mask = lgo_masked_d_i_m.mask & zspeed_d_i_m.mask
+# 			full_stationary_point_mask_masked_d_i_m=np.ma.masked_where(full_stationary_point_mask,del_i)
+# 			full_stationary_point_mask_masked_d_j_m=np.ma.masked_where(full_stationary_point_mask,del_j)
+# 
+# 			if speedref_vv_nodata and lgo_mask_nodata:  # input speed reference has a specified no_data value, and lgo mask does as well...
+# 				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(lgo_mask_image_utm!=lgo_mask_nodata)))&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))
+# 			elif speedref_vv_nodata:
+# 				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|(lgo_mask_image_utm==1))&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))
+# 			else:
+# 				full_stationary_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_zero_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))|(lgo_mask_image_utm==1))&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))
+# 																			  
+# 			full_stationary_masked_num_valid_pix=np.count_nonzero(np.array(full_stationary_point_mask==False))
+# 
+# 	# 		full_stationary_masked_offset_available=False
+# 			if full_stationary_masked_num_valid_pix>0:
+# 				full_stationary_masked_offset_i = -(np.median(full_stationary_point_mask_masked_d_i_m.compressed()))
+# 				full_stationary_masked_offset_j = -(np.median(full_stationary_point_mask_masked_d_j_m.compressed()))
+# 				full_stationary_masked_stdev_i = np.std(full_stationary_point_mask_masked_d_i_m.compressed())
+# 				full_stationary_masked_stdev_j = np.std(full_stationary_point_mask_masked_d_j_m.compressed())
+# 				full_stationary_masked_offset_available=True
+# 
+# 				print('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
+# 						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix))
+# 				if not(args.nlf):
+# 					if full_stationary_masked_num_valid_pix>0:
+# 						t_log('found full_stationary_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
+# 						(full_stationary_masked_offset_i,full_stationary_masked_offset_j,full_stationary_masked_stdev_i,full_stationary_masked_stdev_j,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix),outlogdisabled=args.nlf)
+# 			
+# 				##############################################################
+# 				# bilinear offset correction - if you have enough valid pixels
+# 				##############################################################
+# 				full_stationary_bilinear_masked_offset_available=False
+# 				if args.offset_correction_bilinear_fit and (full_stationary_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
+# 					full_stationary_bilinear_masked_offset_available=True
+# 					ix,iy=full_stationary_point_mask_masked_d_i_m.nonzero()
+# 					coefs_i=polyfit2d(ix, iy, full_stationary_point_mask_masked_d_i_m[ix,iy], [1,1])
+# 					coefs_j=polyfit2d(ix, iy, full_stationary_point_mask_masked_d_j_m[ix,iy], [1,1])
+# 					Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
+# 					full_stationary_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
+# 					full_stationary_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
+# 
+# 
+# 
+# 		######################################################################################################################################################
+# 		# SECOND part of special case for GREENLAND where both velocity field and lgo mask can be used together to calculate offset - otherwise use only one or none below...
+# 		#  this combines land and medium and low speed pixels through vector fits to find offsets
+# 		######################################################################################################################################################
+# 		# if args.offset_correction_speedref and args.offset_correction_lgo_mask:  could do this, but actually at this point have enough info to do this:
+# 		if (midspeed_offset_available or (midspeed_offset_available and zspeed_offset_available)) and lgo_masked_offset_available:
+# 			print('attempting to find vector-tied offset correction for combined medium, low and land masked areas')
+# 			# did mask these above, but now need to do the combined mask because some points will be in both masks...
+# 		
+# 			# make sure vv ref mz speeds over land have zero i and j components, then find vector field offsets
+# 			# ok to do this here because it is the last use of speedref_ vector components - only speedref_vel_vv used elsewhere below?
+# 			if speedref_vv_nodata and (speedref_vv_nodata!=0.0):
+# 				speedref_vel_vx[lgo_mask_image_utm==1]=0.0
+# 				speedref_vel_vy[lgo_mask_image_utm==1]=0.0
+# 				speedref_vel_vv[lgo_mask_image_utm==1]=0.0
+# 			else:
+# 				speedref_vel_vx[lgo_mask_image_utm==1]=0.000000001
+# 				speedref_vel_vy[lgo_mask_image_utm==1]=0.000000001   # zero might be nodata - is tested that way below if speedref_vv_nodata not set?
+# 				speedref_vel_vv[lgo_mask_image_utm==1]=0.000000001
+# 
+# 			full_vector_point_mask = lgo_masked_d_i_m.mask & zspeed_d_i_m.mask & midspeed_d_i_m.mask
+# 		
+# 		
+# 	# 		if speedref_vv_nodata:
+# 	# 			full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
+# 	# 			full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)))
+# 	# 		else:
+# 	# 			full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(midspeed_d_i_m - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
+# 	# 			full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(midspeed_d_j_m - (del_t_days*speedref_vel_vy/img1.pix_x_m)))
+# 			if speedref_vv_nodata:
+# 				full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(del_i - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
+# 				full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv==speedref_vv_nodata)),(del_j - (del_t_days*speedref_vel_vy/img1.pix_y_m)))
+# 			else:
+# 				full_vector_point_mask_masked_d_i_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(del_i - (del_t_days*speedref_vel_vx/img1.pix_x_m)))
+# 				full_vector_point_mask_masked_d_j_m=np.ma.masked_where((full_vector_point_mask | (speedref_vel_vv!=0.0) | (speedref_vel_vv==-99.0)),(del_j - (del_t_days*speedref_vel_vy/img1.pix_y_m)))
+# 
+# 			if speedref_vv_nodata and lgo_mask_nodata:  # input speed reference has a specified no_data value, and lgo mask does as well...
+# 				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))))
+# 			elif speedref_vv_nodata:
+# 				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=speedref_vv_nodata))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))))
+# 			else:
+# 				full_vector_masked_num_possible_pix=np.count_nonzero(np.array((((speedref_vel_vv<slow_area_max_vector_speed_md)&(speedref_vel_vv!=0.0)&(speedref_vel_vv!=-99.0))|((lgo_mask_image_utm==1)&(del_i!=0.0)& \
+# 																				  (corr_arr!=corr_nodata_val)))))
+# 																			  
+# 			full_vector_masked_num_valid_pix=np.count_nonzero(np.array(full_vector_point_mask==False))
+# 
+# 	# 		full_vector_masked_offset_available=False
+# 			if full_vector_masked_num_valid_pix>0:
+# 				full_vector_masked_offset_i = -(np.median(full_vector_point_mask_masked_d_i_m.compressed()))
+# 				full_vector_masked_offset_j = -(np.median(full_vector_point_mask_masked_d_j_m.compressed()))
+# 				full_vector_masked_stdev_i = np.std(full_vector_point_mask_masked_d_i_m.compressed())
+# 				full_vector_masked_stdev_j = np.std(full_vector_point_mask_masked_d_j_m.compressed())
+# 				full_vector_masked_offset_available=True
+# 
+# 				print('found full_vector_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
+# 						(full_vector_masked_offset_i,full_vector_masked_offset_j,full_vector_masked_stdev_i,full_vector_masked_stdev_j,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix))
+# 				if not(args.nlf):
+# 					if full_vector_masked_num_valid_pix>0:
+# 						t_log('found full_vector_mask (land and zero_speed) offset correction (del_i: %f del_j: %f std_i %f std_j %f) using %d pixels out of %d possible'%\
+# 						(full_vector_masked_offset_i,full_vector_masked_offset_j,full_vector_masked_stdev_i,full_vector_masked_stdev_j,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix),outlogdisabled=args.nlf)
+# 			
+# 				##############################################################
+# 				# bilinear offset correction - if you have enough valid pixels
+# 				##############################################################
+# 				full_vector_bilinear_masked_offset_available=False
+# 				if args.offset_correction_bilinear_fit and (full_vector_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels):
+# 					full_vector_bilinear_masked_offset_available=True
+# 					ix,iy=full_vector_point_mask_masked_d_i_m.nonzero()
+# 					coefs_i=polyfit2d(ix, iy, full_vector_point_mask_masked_d_i_m[ix,iy], [1,1])
+# 					coefs_j=polyfit2d(ix, iy, full_vector_point_mask_masked_d_j_m[ix,iy], [1,1])
+# 					Ind_arr = np.array(np.meshgrid(range(del_i.shape[1]),range(del_i.shape[0])))
+# 					full_vector_i_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_i)
+# 					full_vector_j_bilinear_offset_corr_arr = -1.0 * polynomial.polyval2d(Ind_arr[1], Ind_arr[0], coefs_j)
+# 
+# 
 
 	# finally - decide which offset to use...  Haran used 0.5 % for zspeed and 2.0 % for slow...
 	found_valid_offset=False
 	found_valid_bilinear_offset=False # flag that will be used below to decide to apply bilinear surfaces as offsets...
 
 
-	if full_vector_bilinear_masked_offset_available and (full_vector_masked_num_valid_pix>args.offset_correction_bilinear_fit_min_pixels) and full_vector_masked_offset_available and (full_vector_masked_num_valid_pix>full_vector_min_num_pix) and ((float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix)>=full_vector_min_percent_valid_pix_available/100.0) and (np.sqrt(full_vector_masked_offset_i**2.0 + full_vector_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
-		final_offset_correction_i=full_vector_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
-		final_offset_correction_j=full_vector_masked_offset_j
-		i_bilinear_offset_corr_arr=full_vector_i_bilinear_offset_corr_arr
-		j_bilinear_offset_corr_arr=full_vector_j_bilinear_offset_corr_arr
-		found_valid_offset=True
-		found_valid_bilinear_offset=True
-		offset_correction_type_applied='full_vector_bilinear_masked_correction'
-		offset_correction_type_descritption='full_vector_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix,100.0*(np.float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix))
-
-	elif full_stationary_bilinear_masked_offset_available and (full_stationary_masked_num_valid_pix>args.offset_correction_bilinear_fit_min_pixels) and full_stationary_masked_offset_available and (full_stationary_masked_num_valid_pix>full_stationary_min_num_pix) and ((float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix)>=full_stationary_min_percent_valid_pix_available/100.0) and (np.sqrt(full_stationary_masked_offset_i**2.0 + full_stationary_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
-		final_offset_correction_i=full_stationary_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
-		final_offset_correction_j=full_stationary_masked_offset_j
-		i_bilinear_offset_corr_arr=full_stationary_i_bilinear_offset_corr_arr
-		j_bilinear_offset_corr_arr=full_stationary_j_bilinear_offset_corr_arr
-		found_valid_offset=True
-		found_valid_bilinear_offset=True
-		offset_correction_type_applied='full_stationary_bilinear_masked_correction'
-		offset_correction_type_descritption='full_stationary_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix,100.0*(np.float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix))
-
-# this should be moved down the stack?
-	elif full_vector_masked_offset_available and (full_vector_masked_num_valid_pix>full_vector_min_num_pix) and ((float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix)>=full_vector_min_percent_valid_pix_available/100.0) and (np.sqrt(full_vector_masked_offset_i**2.0 + full_vector_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		final_offset_correction_i=full_vector_masked_offset_i
-		final_offset_correction_j=full_vector_masked_offset_j
-		found_valid_offset=True
-		offset_correction_type_applied='full_vector_masked_correction'
-		offset_correction_type_descritption='full_vector_masked_correction for vel mosaic speeds < %f m/yr and lgo land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix,100.0*(np.float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix))
-
-# this should be moved down the stack?
-	elif full_stationary_masked_offset_available and (full_stationary_masked_num_valid_pix>full_stationary_min_num_pix) and ((float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix)>=full_stationary_min_percent_valid_pix_available/100.0) and (np.sqrt(full_stationary_masked_offset_i**2.0 + full_stationary_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		final_offset_correction_i=full_stationary_masked_offset_i
-		final_offset_correction_j=full_stationary_masked_offset_j
-		found_valid_offset=True
-		offset_correction_type_applied='full_stationary_masked_correction'
-		offset_correction_type_descritption='full_stationary_masked_correction for vel mosaic speeds < %f m/yr and lgo land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix,100.0*(np.float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix))
-
-# from here on - not a case where BOTH zero_speed and lgo_offsets are to be combined - so everywhere but GREENLAND, and greenland where both are not valid at the same time... (like all pre 5p6 runs of sc_pycorr)	
-	elif zspeed_offset_available and (zspeed_num_valid_pix>zero_speed_min_num_pix) and ((float(zspeed_num_valid_pix)/zspeed_num_possible_pix)>=zero_speed_min_percent_valid_pix_available/100.0) and (np.sqrt(zspeed_offset_i**2.0 + zspeed_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		#use zspeed correction
-		final_offset_correction_i=zspeed_offset_i
-		final_offset_correction_j=zspeed_offset_j
-		found_valid_offset=True
-		offset_correction_type_applied='zero_speed_correction'
-		offset_correction_type_descritption='zero_speed_correction for vel mosaic speeds < %f m/yr, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix,100.0*(np.float(zspeed_num_valid_pix)/zspeed_num_possible_pix))
-	elif midspeed_offset_available and (midspeed_num_valid_pix>mid_speed_min_num_pix) and ((float(midspeed_num_valid_pix)/midspeed_num_possible_pix)>=mid_speed_min_percent_valid_pix_available/100.0) and (np.sqrt(midspeed_offset_i**2.0 + midspeed_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		# use midspeed corection
-		final_offset_correction_i=midspeed_offset_i
-		final_offset_correction_j=midspeed_offset_j
-		found_valid_offset=True
-		offset_correction_type_applied='mid_speed_correction'
-		offset_correction_type_descritption='mid_speed_correction for vel mosaic speeds > %f m/yr and < %f m/yr, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix,100.0*(np.float(midspeed_num_valid_pix)/midspeed_num_possible_pix))
-	elif lgo_bilinear_masked_offset_available and (lgo_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels) and lgo_masked_offset_available  and (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix)>=lgo_masked_min_percent_valid_pix_available/100.0) and (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
-		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
-		final_offset_correction_i=lgo_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
-		final_offset_correction_j=lgo_masked_offset_j
-		i_bilinear_offset_corr_arr=lgo_i_bilinear_offset_corr_arr
-		j_bilinear_offset_corr_arr=lgo_j_bilinear_offset_corr_arr
-		found_valid_offset=True
-		found_valid_bilinear_offset=True
-		offset_correction_type_applied='lgo_bilinear_masked_correction'
-		offset_correction_type_descritption='lgo_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
-	elif lgo_masked_offset_available  and (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix)>=lgo_masked_min_percent_valid_pix_available/100.0) and (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 	if full_vector_bilinear_masked_offset_available and (full_vector_masked_num_valid_pix>args.offset_correction_bilinear_fit_min_pixels) and full_vector_masked_offset_available and (full_vector_masked_num_valid_pix>full_vector_min_num_pix) and ((float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix)>=full_vector_min_percent_valid_pix_available/100.0) and (np.sqrt(full_vector_masked_offset_i**2.0 + full_vector_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
+# 		final_offset_correction_i=full_vector_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
+# 		final_offset_correction_j=full_vector_masked_offset_j
+# 		i_bilinear_offset_corr_arr=full_vector_i_bilinear_offset_corr_arr
+# 		j_bilinear_offset_corr_arr=full_vector_j_bilinear_offset_corr_arr
+# 		found_valid_offset=True
+# 		found_valid_bilinear_offset=True
+# 		offset_correction_type_applied='full_vector_bilinear_masked_correction'
+# 		offset_correction_type_descritption='full_vector_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix,100.0*(np.float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix))
+# 
+# 	elif full_stationary_bilinear_masked_offset_available and (full_stationary_masked_num_valid_pix>args.offset_correction_bilinear_fit_min_pixels) and full_stationary_masked_offset_available and (full_stationary_masked_num_valid_pix>full_stationary_min_num_pix) and ((float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix)>=full_stationary_min_percent_valid_pix_available/100.0) and (np.sqrt(full_stationary_masked_offset_i**2.0 + full_stationary_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
+# 		final_offset_correction_i=full_stationary_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
+# 		final_offset_correction_j=full_stationary_masked_offset_j
+# 		i_bilinear_offset_corr_arr=full_stationary_i_bilinear_offset_corr_arr
+# 		j_bilinear_offset_corr_arr=full_stationary_j_bilinear_offset_corr_arr
+# 		found_valid_offset=True
+# 		found_valid_bilinear_offset=True
+# 		offset_correction_type_applied='full_stationary_bilinear_masked_correction'
+# 		offset_correction_type_descritption='full_stationary_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix,100.0*(np.float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix))
+# 
+# # this should be moved down the stack?
+# 	elif full_vector_masked_offset_available and (full_vector_masked_num_valid_pix>full_vector_min_num_pix) and ((float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix)>=full_vector_min_percent_valid_pix_available/100.0) and (np.sqrt(full_vector_masked_offset_i**2.0 + full_vector_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		final_offset_correction_i=full_vector_masked_offset_i
+# 		final_offset_correction_j=full_vector_masked_offset_j
+# 		found_valid_offset=True
+# 		offset_correction_type_applied='full_vector_masked_correction'
+# 		offset_correction_type_descritption='full_vector_masked_correction for vel mosaic speeds < %f m/yr and lgo land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,full_vector_masked_num_valid_pix,full_vector_masked_num_possible_pix,100.0*(np.float(full_vector_masked_num_valid_pix)/full_vector_masked_num_possible_pix))
+# 
+# # this should be moved down the stack?
+# 	elif full_stationary_masked_offset_available and (full_stationary_masked_num_valid_pix>full_stationary_min_num_pix) and ((float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix)>=full_stationary_min_percent_valid_pix_available/100.0) and (np.sqrt(full_stationary_masked_offset_i**2.0 + full_stationary_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		final_offset_correction_i=full_stationary_masked_offset_i
+# 		final_offset_correction_j=full_stationary_masked_offset_j
+# 		found_valid_offset=True
+# 		offset_correction_type_applied='full_stationary_masked_correction'
+# 		offset_correction_type_descritption='full_stationary_masked_correction for vel mosaic speeds < %f m/yr and lgo land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,full_stationary_masked_num_valid_pix,full_stationary_masked_num_possible_pix,100.0*(np.float(full_stationary_masked_num_valid_pix)/full_stationary_masked_num_possible_pix))
+# 
+# # from here on - not a case where BOTH zero_speed and lgo_offsets are to be combined - so everywhere but GREENLAND, and greenland where both are not valid at the same time... (like all pre 5p6 runs of sc_pycorr)	
+# 	elif zspeed_offset_available and (zspeed_num_valid_pix>zero_speed_min_num_pix) and ((float(zspeed_num_valid_pix)/zspeed_num_possible_pix)>=zero_speed_min_percent_valid_pix_available/100.0) and (np.sqrt(zspeed_offset_i**2.0 + zspeed_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		#use zspeed correction
+# 		final_offset_correction_i=zspeed_offset_i
+# 		final_offset_correction_j=zspeed_offset_j
+# 		found_valid_offset=True
+# 		offset_correction_type_applied='zero_speed_correction'
+# 		offset_correction_type_descritption='zero_speed_correction for vel mosaic speeds < %f m/yr, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,zspeed_num_valid_pix,zspeed_num_possible_pix,100.0*(np.float(zspeed_num_valid_pix)/zspeed_num_possible_pix))
+# 	elif midspeed_offset_available and (midspeed_num_valid_pix>mid_speed_min_num_pix) and ((float(midspeed_num_valid_pix)/midspeed_num_possible_pix)>=mid_speed_min_percent_valid_pix_available/100.0) and (np.sqrt(midspeed_offset_i**2.0 + midspeed_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		# use midspeed corection
+# 		final_offset_correction_i=midspeed_offset_i
+# 		final_offset_correction_j=midspeed_offset_j
+# 		found_valid_offset=True
+# 		offset_correction_type_applied='mid_speed_correction'
+# 		offset_correction_type_descritption='mid_speed_correction for vel mosaic speeds > %f m/yr and < %f m/yr, %d valid pixels out of %d possible for scene (%f %%)'%(slow_area_zero_speed_myr,slow_area_max_vector_speed_myr,midspeed_num_valid_pix,midspeed_num_possible_pix,100.0*(np.float(midspeed_num_valid_pix)/midspeed_num_possible_pix))
+# 	elif lgo_bilinear_masked_offset_available and (lgo_masked_num_valid_pix>=args.offset_correction_bilinear_fit_min_pixels) and lgo_masked_offset_available  and (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix)>=lgo_masked_min_percent_valid_pix_available/100.0) and (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+# 		# use bilinear lgo_masked corection - but fields applied below, where i and j dc offsets are applied for the other corrections...
+# 		final_offset_correction_i=lgo_masked_offset_i	# keep these anyway, to compare to bilinear solution offsets 
+# 		final_offset_correction_j=lgo_masked_offset_j
+# 		i_bilinear_offset_corr_arr=lgo_i_bilinear_offset_corr_arr
+# 		j_bilinear_offset_corr_arr=lgo_j_bilinear_offset_corr_arr
+# 		found_valid_offset=True
+# 		found_valid_bilinear_offset=True
+# 		offset_correction_type_applied='lgo_bilinear_masked_correction'
+# 		offset_correction_type_descritption='lgo_bilinear_masked_correction fields for i and j for land pixels,' + ' - using bilinear coefs_i ' + str(coefs_i.ravel()) + ' coefs_j ' + str(coefs_j.ravel()) +' %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
+# 	elif lgo_masked_offset_available  and (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix)>=lgo_masked_min_percent_valid_pix_available/100.0) and (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
+	if lgo_masked_offset_available  and (lgo_masked_num_valid_pix>lgo_masked_min_num_pix) and ((float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix)>=lgo_masked_min_percent_valid_pix_available/100.0) and (np.sqrt(lgo_masked_offset_i**2.0 + lgo_masked_offset_j**2.0)<args.max_allowable_pixel_offset_correction):
 		# use lgo_masked corection
 		final_offset_correction_i=lgo_masked_offset_i
 		final_offset_correction_j=lgo_masked_offset_j
@@ -1723,7 +1735,8 @@ cam1=args.cam1
 # 	vx=np.ma.masked_where(((del_corr_arr<dcam)&(corr_arr<cam))|(corr_arr<cam1),((del_i*img1.pix_x_m)/del_t_val))
 # 	vy=np.ma.masked_where(((del_corr_arr<dcam)&(corr_arr<cam))|(corr_arr<cam1),((del_j*img1.pix_y_m)/del_t_val))
 
-if not(args.offset_correction_speedref or args.offset_correction_lgo_mask) or not(found_valid_offset):  # no offset to apply
+# if not(args.offset_correction_speedref or args.offset_correction_lgo_mask) or not(found_valid_offset):  # no offset to apply
+if not(args.use_itslive_land_mask_from_web or args.offset_correction_lgo_mask) or not(found_valid_offset):  # no offset to apply
 	# create masked and unmasked versions of the speed, vx, and vy output
 	# the masked version will be written to the nc file with no_data values in corners and also where the correlation parameters suggest masking is needed
 # 	vv=np.ma.masked_where(((del_corr_arr<dcam)&(corr_arr<cam))|(corr_arr<cam1)|(((offset_dist_ij_arr*img1.pix_x_m)/del_t_val)>plotvmax),((offset_dist_ij_arr*img1.pix_x_m)/del_t_val))
@@ -2218,7 +2231,7 @@ if not(args.nlf):
 	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
 
 # lgo_mask_image_utm - added in v5p2
-if args.offset_correction_lgo_mask:
+if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
 	varname='lgo_mask'
 	print('writing %s'%(varname))
 	datatype=np.dtype('byte')
