@@ -2,7 +2,7 @@ import glob
 import numpy as np
 import datetime as dt
 
-inAfiles = glob.glob('S2*L2A')
+inAfiles = glob.glob('S2*201[78]*L2A')
 
 pycorr_exec = 'python /Users/mark/repos/pycorr_iceflow/pycorr_iceflow_v1.1.py'
 out_list_name = f'command_list_{dt.datetime.now().strftime("%Y%m%dT%H%M%S")}.txt'
