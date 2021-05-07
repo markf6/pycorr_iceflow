@@ -1,6 +1,6 @@
 # pycorr_iceflow
 
-![](images/S2banner_log10.png)
+![banner](images/S2banner_log10.png)
 ## Ice flow "feature" offset tracking in satellite images
 
 ### basic fuction
