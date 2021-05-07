@@ -19,10 +19,10 @@ A lot of satellite imagery has a geolocation accuracy that may be tens of meters
 
 A sense of the background accuracy of the matching process for an image pair can be gained by looking at the scatter in the offsets determined for land pixels. Note that this scatter is likely similar for images separated in time by a few days or for a year - meaning that the same scatter would produce a much larger scatter in velocity determined from a few-day pair than from a pair with longer time separation. It is always a tradeoff to use longer pairs for accuracy if the ice you are studying has rapid variations in velocity over time - every image pair velocity field is a time averaged displacement measurement.
 
-The second common source of error is internal distortion in the satellite imagery because of limited accuracy in the surface elevation model used to geolocate the pixels in the image. While many optical imagers take imagery from a near-nadir viewpoint, the width of the image swath is large enough that pixels near the edge of the swath are viewed from an angle off nadir - meaning that any error in an elevation model used to map those pixels to the surface of the Earth will mis-locate them relative to pixels in the image center.  If the pixel in question is located to the right of the satellite on one pass, and to the left on an adjacent pass, then the topographic error will produce offsets in opposite directions. This parallax is the signal that is used to map topography from stereo imagery, but for ice flow mapping it isn't a good thing. It is also the case that topographic errors are much more common over rapidly flowing or rapidly melting ice than over any other land cover type.  There is a simple solution to this problem: **use images from the same orbit track** so that the topographic distortion is the essentially the same in both images - this eliminates 90% of the issue.  For landsat this means using image pairs with the same path and row designations. For Sentinel 2 there is a similar "track" in the metadata, but the easiest approach is to use images separated by multiples of 5 days - so a 5 day S2A x S2B pair, or a 10 day S2A x S2A or S2B x S2B pair (Sentinel 2 A and B are in 10-day repeat orbits, staggered 5 days apart).
+The second common source of error is internal distortion in the satellite imagery because of limited accuracy in the surface elevation model used to geolocate the pixels in the image. While many optical imagers take imagery from a near-nadir viewpoint, the width of the image swath is large enough that pixels near the edge of the swath are viewed from an angle off nadir - meaning that any error in an elevation model used to map those pixels to the surface of the Earth will mis-locate them relative to pixels in the image center.  If the pixel in question is located to the right of the satellite on one pass, and to the left on an adjacent pass, then the topographic error will produce offsets in opposite directions. This parallax is the signal that is used to map topography from stereo imagery, but for ice flow mapping it isn't a good thing. It is also the case that topographic errors are much more common over rapidly flowing or rapidly melting ice than over any other land cover type.  There is a simple solution to this problem: **use images from the same orbit track** so that the topographic distortion is the essentially the same in both images - this eliminates 95% of the issue.  For landsat this means using image pairs with the same path and row designations. For Sentinel 2 there is a similar "track" in the metadata, but the easiest approach is to use images separated by multiples of 5 days - so a 5 day S2A x S2B pair, or a 10 day S2A x S2A or S2B x S2B pair (Sentinel 2 A and B are in 10-day repeat orbits, staggered 5 days apart).
 
 ## Installation
-The libraries required to run pycorr can be installed into a local environment with Anaconda:
+The libraries required to run pycorr can be installed into a local environment with [Anaconda]():
 ```
  conda create --name test_pycorr_env -c conda-forge numpy matplotlib gdal=3.1.2 netCDF4 psutil scipy opencv ipython fiona shapely pyproj boto3
 ```
@@ -32,7 +32,10 @@ At the time of writing (5/5/2021) the current gdal in conda-forge (3.2.2) did no
 From this repository the only file you need is pycorr_iceflow_1.1.py.
 
 Activate the conda environment:
+```
 conda activate test_pycorr_env
+```
+
 
 
 

@@ -1,1 +1,1 @@
-conda create --name pycorr numpy matplotlib gdal netCDF4 psutil scipy opencv ipython jupyter jupyterlab h5py git
+conda create --name pycorr_env -c conda-forge numpy matplotlib gdal=3.1.2 netCDF4 psutil scipy opencv ipython fiona shapely pyproj boto3
