@@ -17,19 +17,57 @@ pycorr is computationally fast because of the use of numpy and the openCV librar
 ---
 ## installation
 The libraries required to run pycorr can be installed into a local environment with [Anaconda](https://www.anaconda.com/products/individual) pulling from the [conda-forge](https://conda-forge.org) repository:
+### create environment
 ```
  conda create --name test_pycorr_env -c conda-forge numpy matplotlib gdal=3.1.2 netCDF4 psutil scipy opencv ipython fiona shapely pyproj boto3 git
 ```
 
 At the time of writing (5/5/2021) the current gdal in conda-forge (3.2.2) did not install python bindings properly - version 3.1.2 was specified here to avoid this issue.
 
-From this repository the only file you need is pycorr_iceflow_1.1.py.
+### clone the repository
+```
+git clone https://github.com/markf6/pycorr_iceflow.git
+```
 
-Activate the conda environment:
+[From this repository the only file you need at this point is pycorr_iceflow_1.1.py]
+
+---
+## example run
+### activate the conda environment:
 ```
 conda activate test_pycorr_env
 ```
 
+
+#### get two Sentinel 2 images from the [AWS S2 Level2A CloudOptimizedGeotiff (COG) public data archive](https://registry.opendata.aws/sentinel-2-l2a-cogs/)
+
+```
+curl https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/7/V/EG/2020/5/S2B_7VEG_20200512_0_L2A/B08.tif --output S2B_7VEG_20200512_0_L2A_B08.tif
+curl https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/7/V/EG/2020/5/S2A_7VEG_20200527_0_L2A/B08.tif --output S2A_7VEG_20200527_0_L2A_B08.tif
+```
+
+### run pycorr on this image pair, generate output netCDF4 (.nc) data file and browse GeoTIFF (with log colorscale)
+```
+python pycorr_iceflow_v1.1.py -imgdir . S2B_7VEG_20200512_0_L2A_B08.tif S2A_7VEG_20200527_0_L2A_B08.tif \
+                              -img1datestr 20200512 -img2datestr 20200527 -datestrfmt "%Y%m%d" \
+                              -inc 10 -half_source_chip 10  -half_target_chip 55 -plotvmax 25 -log10 \
+                              -out_name_base L2A_S2BA_7VEG_15_20200512_20200527 -progupdates -use_itslive_land_mask_from_web
+ ```
+### output files
+
+the output browse image (speed represented by log colorscale, with dark red = 25 m/d (-log10 -plotvmax 25))
+![](images/L2A_S2BA_7VEG_15_20200512_20200527_log10.png)
+
+The output netCDF4 file (L2A_S2BA_7VEG_15_20200512_20200527.nc) can be opened as a raster in QGIS - choose the "vv_masked" layer to get ice flow speed, or vx_masked and vy_masked to get the vector components of the flow speed in projection x and y meters/day.
+
+selecting vv_masked layer from netCDF4 .nc file
+
+![](images/QGIS_selecting_vv_masked.png)
+
+
+The selected layer, with colorscale applied
+
+![](images/QGIS_speed_with_colorscale.png)
 
 ---
 ## major sources of error
