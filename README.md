@@ -70,18 +70,18 @@ img1.tif img2.tif  [the band 8 input file names - S2B_7VEG_20200512_0_L2A_B08.ti
 
 -inc 10 -half_source_chip 10  -half_target_chip 55 
 [-inc is output grid spacing in input image pixels (for S2 10m pixels, output will have 100m pixel size)]
-[-half_source_chip 10 specifies that a 20 x 20 pixel "chip" will be taked from each the grid pixel center]
+[-half_source_chip 10 specifies that a 20 x 20 pixel "chip" will be taken from each the grid pixel center]
 [-half_target_chip 55   specifies a 110 x 110 pixel "chip" in the second image - search looks at every integer pixel offset 
                         of the source chip within the target chip, generating a correlation surface, and then reports the peak 
-                        in the splined correlation surface at subpixel level (actually to 1/100th of a pixel)]
+                        in the splined correlation surface at subpixel level (to 1/100th of a pixel)]
 
-                        Note that maximum trackable offset in x or y is (halt_target_chip - half_source_chip) * 
+                        Note that maximum trackable offset in x or y is (half_target_chip - half_source_chip) * 
                         input_pixel_size_in_meters - so for this example (55 pixels - 10 pixels) * 10 m/pixel = 
                         max trackable offset of 450 meters, or 30 m/d for this 15-day pair.
 
--plotvmax 25 -log10    [these two together cause a color scale GeoTIFF browse image to be generated 
-                        - log color scale, max velocity for browse image color scale is 25 m/d (only for browse image - 
-                        DOES NOT EFFECT max trackable offset set by half_source_chip and half_target_chip above)
+-plotvmax 25 -log10    [these two together cause a color scale GeoTIFF browse image to be generated - log color scale, 
+                        max velocity for browse image color scale is 25 m/d (only for browse image - DOES NOT EFFECT 
+                        max trackable offset set by half_source_chip and half_target_chip above)
 
 -out_name_base L2A_S2BA_7VEG_15_20200512_20200527 [a string you specify for the start of the output filename, so you remember what you did]
 
