@@ -93,7 +93,7 @@ img1.tif img2.tif  [the band 8 input file names - S2B_7VEG_20200512_0_L2A_B08.ti
                                  the two images - this makes the "land" chips have a 0 median offset, which provides an initial correction 
                                  for geolocation offset between the pair of images - very important for short time intervals]
 
-
+```
 
 
 ### output files
