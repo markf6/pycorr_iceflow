@@ -53,12 +53,57 @@ python pycorr_iceflow_v1.1.py -imgdir . S2B_7VEG_20200512_0_L2A_B08.tif S2A_7VEG
                               -inc 10 -half_source_chip 10  -half_target_chip 55 -plotvmax 25 -log10 \
                               -out_name_base L2A_S2BA_7VEG_15_20200512_20200527 -progupdates -use_itslive_land_mask_from_web
  ```
+### explanation of these options
+```
+-imgdir . [image files are in current directory]
+or
+-img1dir aaa -img2dir bbb [specify directories for each image file]
+
+img1.tif img2.tif  [the band 8 input file names - S2B_7VEG_20200512_0_L2A_B08.tif S2A_7VEG_20200527_0_L2A_B08.tif 
+                    in this case - can be any geospatial format GDAL can read (.jp2 for S2 L1C images works, etc)]
+
+-img1datestr 20200512 -img2datestr 20200527 -datestrfmt "%Y%m%d"   [specify the image acquisiton dates using the specified format %Y is 
+                                                                    4 digit year, %m is two digit month (01 - 12), %d is two digit day 
+                                                                    (01-31). If not specified, pycorr will look for the date in the 
+                                                                    Landsat or S2 filename, but the conventions for these vary and may 
+                                                                    not be covered]
+
+-inc 10 -half_source_chip 10  -half_target_chip 55 
+[-inc is output grid spacing in input image pixels (for S2 10m pixels, output will have 100m pixel size)]
+[-half_source_chip 10 specifies that a 20 x 20 pixel "chip" will be taked from each the grid pixel center]
+[-half_target_chip 55   specifies a 110 x 110 pixel "chip" in the second image - search looks at every integer pixel offset 
+                        of the source chip within the target chip, generating a correlation surface, and then reports the peak 
+                        in the splined correlation surface at subpixel level (actually to 1/100th of a pixel)]
+
+                        Note that maximum trackable offset in x or y is (halt_target_chip - half_source_chip) * 
+                        input_pixel_size_in_meters - so for this example (55 pixels - 10 pixels) * 10 m/pixel = 
+                        max trackable offset of 450 meters, or 30 m/d for this 15-day pair.
+
+-plotvmax 25 -log10    [these two together cause a color scale GeoTIFF browse image to be generated 
+                        - log color scale, max velocity for browse image color scale is 25 m/d (only for browse image - 
+                        DOES NOT EFFECT max trackable offset set by half_source_chip and half_target_chip above)
+
+-out_name_base L2A_S2BA_7VEG_15_20200512_20200527 [a string you specify for the start of the output filename, so you remember what you did]
+
+-progupdates [output updates for each 10% of the input image rows processed, so you aren't staring at a blank screen]
+
+-use_itslive_land_mask_from_web [pycorr will search the its-live-data.jpl.nasa.gov.s3.amazonaws.com S3 bucket - first it pulls an index 
+                                 shapefile and uses the center lat,lon of the overlap of the input images to figure out which its-live 
+                                 land mask to use, then it builds a local land mask based on it and uses it for offset correction between 
+                                 the two images - this makes the "land" chips have a 0 median offset, which provides an initial correction 
+                                 for geolocation offset between the pair of images - very important for short time intervals]
+
+
+
+
 ### output files
 
 the output browse image (speed represented by log colorscale, with dark red = 25 m/d (-log10 -plotvmax 25))
 ![](images/L2A_S2BA_7VEG_15_20200512_20200527_log10.png)
 
-The output netCDF4 file (L2A_S2BA_7VEG_15_20200512_20200527.nc) can be opened as a raster in QGIS - choose the "vv_masked" layer to get ice flow speed, or vx_masked and vy_masked to get the vector components of the flow speed in projection x and y meters/day.
+The output netCDF4 file (L2A_S2BA_7VEG_15_20200512_20200527.nc) can be opened as a raster in QGIS - 
+    choose the "vv_masked" layer to get ice flow speed, or vx_masked and vy_masked to get the vector components of the flow speed 
+    in projection x and y meters/day.
 
 selecting vv_masked layer from netCDF4 .nc file
 
