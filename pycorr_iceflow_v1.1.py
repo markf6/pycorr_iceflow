@@ -208,7 +208,23 @@ class GeoImg_noload:
 #         self.img_ov10=self.img[0::10,0::10]
 
 
+def output_float32array_as_geotiff(outarray, name_extension='vv', outdir='.', file_name_base='', nodata_value=-9999.0):
+    (out_lines,out_pixels)=outarray.shape # any of the output variables would work here - just need array dimensions
+    out_bands = 1
+    format = "GTiff"
+    driver = gdal.GetDriverByName( format )
 
+    dst_filename = f'{outdir}/{file_name_base}_{name_extension}.tif'
+    dst_ds = driver.Create( dst_filename, out_pixels, out_lines, out_bands, gdal.GDT_Float32 )
+    print('out image %s %s %d, %d, %d'%(dst_filename, format, out_pixels, out_lines, out_bands))
+    if not(args.nlf):
+            log_output_lines.append('out image %s %s %d, %d, %d\n'%(dst_filename, format, out_pixels, out_lines, out_bands))
+    # dst_ds.SetGeoTransform( [ com_min_x, inc * img1.pix_x_m, 0, com_max_y, 0, inc * img1.pix_y_m ] ) # note pix_y_m typically negative
+    dst_ds.SetGeoTransform( [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ] ) # note pix_y_m typically negative
+    dst_ds.SetProjection( img1.proj )
+    dst_ds.GetRasterBand(1).WriteArray( outarray.astype('float32') )
+    dst_ds.GetRasterBand(1).SetNoDataValue(np.double(nodata_value))
+    dst_ds = None # done, close the dataset
 
 
 
@@ -430,10 +446,10 @@ parser.add_argument('-progupdates',
                     action='store_true',
                     default=False, 
                     help='do not provide progress updates - [output progress updates]')
-parser.add_argument('-debug_tifs', 
+parser.add_argument('-output_geotiffs_instead_of_netCDF', 
                     action='store_true',
                     default=False, 
-                    help='output int offsets and other diagnostic tifs - [no]')
+                    help='output GeoTIFFs of vx,vy,vv,del_corr instead of .nc file with layers (supports all GDAL projections, netCDF only supports UTM,PS) - [no]')
 # parser.add_argument('-offset_correction_speedref', 
 #                     action='store_true',
 #                     default=False, 
@@ -1866,508 +1882,541 @@ if(args.log10):
 	dst_ds.GetRasterBand(4).WriteArray( (lvv_rgba[:,:,3]*255).astype('ubyte') )
 	dst_ds = None # done, close the dataset
 
-##################################
-#
-# now for the netCDF data stack...
-#
-##################################
-
-quiet = False
-clobber = True     # overwrite existing output nc file
-
-out_nc_filename=outdir + '/' + file_name_base + '_hp.nc'
-
-nc_outfile = netCDF4.Dataset(out_nc_filename,'w',clobber=clobber,format='NETCDF4')
-
-
-# First set global attributes that GDAL uses when it reads netCFDF files
-nc_outfile.setncattr('GDAL_AREA_OR_POINT','Area')
-nc_outfile.setncattr('Conventions','CF-1.6')
-nc_outfile.setncattr('history','%s : %s  ====> sc_pycorr run'%(dt.datetime.now().isoformat(),' '.join(sys.argv)))
-nc_outfile.setncattr('GDAL',gdal.VersionInfo("VERSION_DATE"))
-
-# if we were copying from an nc file, we would...
-# for attr in vv_nc_basefile.ncattrs():
-#     nc_outfile.setncattr(attr,vv_nc_basefile.getncattr(attr))
-
-# set dimensions
-nc_outfile.createDimension('x',out_pixels)
-nc_outfile.createDimension('y',out_lines)
-
-
-# set variables
-# first set up image_pair_times variable not as a dimension, but as holder for attributes for the times of the two input images, delt, etc.
-varname='image_pair_times'
-delt=str(del_t_val) # need to set this as an attribute
-delt_units=del_t_unit_str
-delt_speed_units=del_t_speedunit_str
-datatype=np.dtype('S1')
-dimensions=()
-FillValue=None
-lsd = None
-
-dtstart=img1.imagedatetime
-start_decimal_year=dtstart.year + (dtstart - dt.datetime(year=dtstart.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtstart.year+1,month=1,day=1)-dt.datetime(year=dtstart.year,month=1,day=1)).total_seconds()
-dtmid=img1.imagedatetime + dt.timedelta(seconds=((img2.imagedatetime-img1.imagedatetime).total_seconds()/2.0))
-mid_decimal_year=dtmid.year + (dtmid - dt.datetime(year=dtmid.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtmid.year+1,month=1,day=1)-dt.datetime(year=dtmid.year,month=1,day=1)).total_seconds()
-dtstop=img2.imagedatetime
-stop_decimal_year=dtstop.year + (dtstop - dt.datetime(year=dtstop.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtstop.year+1,month=1,day=1)-dt.datetime(year=dtstop.year,month=1,day=1)).total_seconds()
-
-# 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-var.setncattr('del_t',delt)
-var.setncattr('del_t_units',delt_units)
-var.setncattr('del_t_speed_units',delt_speed_units)
-var.setncattr('start_time_decimal_year',str(start_decimal_year))
-var.setncattr('mid_time_decimal_year',str(mid_decimal_year))
-var.setncattr('end_time_decimal_year',str(stop_decimal_year))
-var.setncattr('start_date',dtstart.isoformat())
-var.setncattr('mid_date',dtmid.isoformat())
-var.setncattr('end_date',dtstop.isoformat())
-
-
-# next set up input_image_details variable not as a dimension, but as holder for attributes for the times of the two input images, delt, etc.
-varname='input_image_details'
-
-datatype=np.dtype('S1')
-dimensions=()
-FillValue=None
-lsd = None
-
-# 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-var.setncattr('image1_filename',img1.filename)
-var.setncattr('image1_path',img1.in_dir_abs_path)
-var.setncattr('image1_pix_x_size',img1.pix_x_m)
-var.setncattr('image1_pix_y_size',img1.pix_y_m)
-var.setncattr('image1_proj_WKT',img1.proj)
-var.setncattr('image1_proj_GeoTransform',img1.gt)
-var.setncattr('image1_decimal_year',str(start_decimal_year))
-
-var.setncattr('image2_filename',img2.filename)
-var.setncattr('image2_path',img2.in_dir_abs_path)
-var.setncattr('image2_pix_x_size',img2.pix_x_m)
-var.setncattr('image2_pix_y_size',img2.pix_y_m)
-var.setncattr('image2_proj_WKT',img2.proj)
-var.setncattr('image2_proj_GeoTransform',img2.gt)
-var.setncattr('image2_decimal_year',str(stop_decimal_year))
-
-
-# projection variable is tricky - for all L8 not in Antarctica, it is transverse mercator; for Antarctica, polar stereo
-if (img1.srs.GetAttrValue('PROJECTION') == 'Polar_Stereographic'):
-	# Antarctic input file - OR this could be a non-landsat PS image from the north and it might work? because of the sign of the pole used below??? maybe...
-	print('antarctic image')
-
-	varname='polar_stereographic'
-	grid_mapping='polar_stereographic'  # need to set this as an attribute for the image variables
-	datatype=np.dtype('S1')
-	dimensions=()
-	FillValue=None
-	lsd = None
-# 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-	# variable made, now add attributes
-	out_pix_size_x=output_array_pix_x_m
-	out_pix_size_y=output_array_pix_y_m
-	out_geotransform = [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ]
+if args.output_geotiffs_instead_of_netCDF:
+    ######################
+    #
+    # output as separate GeoTIFFs because netCDF does not support all projections - this will, as long as GDAL knows about the projection
+    #
+    ######################
 	
-	var.setncattr('grid_mapping_name','polar_stereographic')
-	var.setncattr('straight_vertical_longitude_from_pole',img1.srs.GetProjParm('central_meridian'))
-	var.setncattr('false_easting',img1.srs.GetProjParm('false_easting'))
-	var.setncattr('false_northing',img1.srs.GetProjParm('false_northing'))
-	var.setncattr('latitude_of_projection_origin',np.sign(img1.srs.GetProjParm('latitude_of_origin'))*90.0)  # could hardcode this to be -90 for landsat - just making it more general, maybe...
-	var.setncattr('standard_parallel',img1.srs.GetProjParm('latitude_of_origin'))
-	var.setncattr('longitude_of_prime_meridian',float(img1.srs.GetAttrValue('GEOGCS|PRIMEM',1)))
-	var.setncattr('semi_major_axis',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',1)))
-	var.setncattr('inverse_flattening',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',2)))
-	var.setncattr('spatial_ref',img1.srs.ExportToWkt())
-	var.setncattr('GeoTransform',' '.join(str(x) for x in out_geotransform))  # note this has pixel size in it - set  explicitly above
+    output_float32array_as_geotiff(vx_nomask, name_extension='vx', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
+    vx_masked = vx.data
+    vx_masked[vx.mask] = vel_nodata_val
+    output_float32array_as_geotiff(vx_masked, name_extension='vx_masked', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
 
-elif (img1.srs.GetAttrValue('PROJECTION') == 'Transverse_Mercator'):
-	# rest of the world for landsat - UTM
-	# make 'transverse_mercator' variable with special gadl netCDF projection attributes
-	varname='transverse_mercator'
-	grid_mapping='transverse_mercator'  # need to set this as an attribute for the image variables
-	datatype=np.dtype('S1')
-	dimensions=()
-	FillValue=None
-	lsd = None
-# 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-	# variable made, now add attributes
-	out_pix_size_x=output_array_pix_x_m
-	out_pix_size_y=output_array_pix_y_m
-	out_geotransform = [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ]
-	
-	var.setncattr('grid_mapping_name','transverse_mercator')
-	var.setncattr('longitude_of_central_meridian',img1.srs.GetProjParm('central_meridian'))
-	var.setncattr('false_easting',img1.srs.GetProjParm('false_easting'))
-	var.setncattr('false_northing',img1.srs.GetProjParm('false_northing'))
-	var.setncattr('latitude_of_projection_origin',img1.srs.GetProjParm('latitude_of_origin'))
-	var.setncattr('scale_factor_at_central_meridian',img1.srs.GetProjParm('scale_factor'))
-	var.setncattr('longitude_of_prime_meridian',float(img1.srs.GetAttrValue('GEOGCS|PRIMEM',1)))
-	var.setncattr('semi_major_axis',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',1)))
-	var.setncattr('inverse_flattening',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',2)))
-	var.setncattr('spatial_ref',img1.srs.ExportToWkt())
-	var.setncattr('GeoTransform',' '.join(str(x) for x in out_geotransform))  # note this has pixel size in it - set  explicitly above
+    output_float32array_as_geotiff(vy_nomask, name_extension='vy', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
+    vy_masked = vy.data
+    vy_masked[vy.mask] = vel_nodata_val
+    output_float32array_as_geotiff(vy_masked, name_extension='vy_masked', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
+
+    output_float32array_as_geotiff(vv_nomask, name_extension='vv', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
+    vv_masked = vv.data
+    vv_masked[vv.mask] = vel_nodata_val
+    output_float32array_as_geotiff(vv_masked, name_extension='vx_masked', outdir=outdir, file_name_base=file_name_base, nodata_value=vel_nodata_val)
+
+    output_float32array_as_geotiff(del_corr_arr, name_extension='del_corr', outdir=outdir, file_name_base=file_name_base, nodata_value=corr_nodata_val)
+    output_float32array_as_geotiff(corr_arr, name_extension='corr', outdir=outdir, file_name_base=file_name_base, nodata_value=corr_nodata_val)
+    
+
+
+
 else:
-	print('projection %s not recognized for this program'%(img1.srs.GetAttrValue('PROJECTION')))
-	exit(-1)
+    ##################################
+    #
+    # now for the netCDF data stack...
+    #
+    ##################################
 
-x_vals=np.arange((out_geotransform[0] + (out_pix_size_x/2.0)),(out_geotransform[0] + (out_pix_size_x * out_pixels)),out_pix_size_x)
-# y_vals=np.arange((out_geotransform[3] + (out_pix_size_y/2.0)),(out_geotransform[3] + (out_pix_size_y * out_lines)),out_pix_size_y)[::-1]  # flip the order to increasing
-y_vals=np.arange((out_geotransform[3] + (out_pix_size_y/2.0)),(out_geotransform[3] + (out_pix_size_y * out_lines)),out_pix_size_y)  # not any more - top down so gdal will be happy
+    quiet = False
+    clobber = True     # overwrite existing output nc file
 
+    out_nc_filename=outdir + '/' + file_name_base + '_hp.nc'
 
-varname='x'
-datatype=np.dtype('float64')
-dimensions=('x')
-FillValue=False
-lsd = None
-# var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-var.setncattr('standard_name','projection_x_coordinate')
-var.setncattr('long_name','x coordinate of projection')
-var.setncattr('units','m')
-var[:] = x_vals
+    nc_outfile = netCDF4.Dataset(out_nc_filename,'w',clobber=clobber,format='NETCDF4')
 
 
-varname='y'
-datatype=np.dtype('float64')
-dimensions=('y')
-FillValue=False
-lsd = None
-# var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-var.setncattr('standard_name','projection_y_coordinate')
-var.setncattr('long_name','y coordinate of projection')
-var.setncattr('units','m')
-var[:] = y_vals
+    # First set global attributes that GDAL uses when it reads netCFDF files
+    nc_outfile.setncattr('GDAL_AREA_OR_POINT','Area')
+    nc_outfile.setncattr('Conventions','CF-1.6')
+    nc_outfile.setncattr('history','%s : %s  ====> sc_pycorr run'%(dt.datetime.now().isoformat(),' '.join(sys.argv)))
+    nc_outfile.setncattr('GDAL',gdal.VersionInfo("VERSION_DATE"))
 
-# set variables
-# first set up image_pair_times variable not as dimension, but as holder for attributes for the times of the two input images, delt, etc.
-varname='offset_correction'
-# delt=str(del_t_val) # need to set this as an attribute
-# delt_units=del_t_unit_str
-# delt_speed_units=del_t_speedunit_str
-datatype=np.dtype('S1')
-dimensions=()
-FillValue=None
-var = nc_outfile.createVariable(varname,datatype, dimensions, fill_value=FillValue)
-if found_valid_offset and not(found_valid_bilinear_offset):
-	var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
-	var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
-	var.setncattr('final_offset_correction_units','pixels')
-	var.setncattr('final_offset_correction_i',str(final_offset_correction_i))
-	var.setncattr('final_offset_correction_j',str(final_offset_correction_j))
-elif found_valid_offset and found_valid_bilinear_offset:
-	var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
-	var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
-	var.setncattr('final_offset_correction_units','pixels')
-	var.setncattr('final_offset_correction_i','coefs_i ' + str(coefs_i.ravel()))
-	var.setncattr('final_offset_correction_j','coefs_j ' + str(coefs_j.ravel()))
-else:
-	var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
-	var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
-	var.setncattr('final_offset_correction_units','pixels')
-	var.setncattr('final_offset_correction_i','None')
-	var.setncattr('final_offset_correction_j','None')
+    # if we were copying from an nc file, we would...
+    # for attr in vv_nc_basefile.ncattrs():
+    #     nc_outfile.setncattr(attr,vv_nc_basefile.getncattr(attr))
 
-if found_valid_offset and found_valid_bilinear_offset:  # write out bilinear correction arrays so that one can get back to original del_i,del_j if needed
-	varname='applied_bilinear_x_offset_correction_in_pixels'
-	print('writing %s'%(varname))
-	datatype=np.dtype('float32')
-	dimensions=('y','x')
-	FillValue=-99.0
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-	var.setncattr('bilinear_offset_correction_details','%s applied to measured x offset (offset in pixels that was added to original match data - subtract x_pix_size*del_t*this_offset and divide by x_pix_size to get to original x offset in pixels)'%(offset_correction_type_applied))
-	var.setncattr('grid_mapping',grid_mapping)
-	var.setncattr('standard_name','x_offset_pixels')
-	var.setncattr('long_name','x offset correction in pixels')
-	var.setncattr('units','pixels')
-	# var[:] = np.flipud(vx_nomask).astype('float32')
-	var[:] = i_bilinear_offset_corr_arr.astype('float32')
-	if not(args.nlf):
-		log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
-	
-	varname='applied_bilinear_y_offset_correction_in_pixels'
-	print('writing %s'%(varname))
-	datatype=np.dtype('float32')
-	dimensions=('y','x')
-	FillValue=-99.0
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-	var.setncattr('bilinear_offset_correction_details','%s applied to measured y offset (offset in pixels that was added to original match data - subtract y_pix_size*del_t*this_offset and divide by y_pix_size to get to original y offset in pixels)'%(offset_correction_type_applied))
-	var.setncattr('grid_mapping',grid_mapping)
-	var.setncattr('standard_name','y_offset_pixels')
-	var.setncattr('long_name','y offset correction in pixels')
-	var.setncattr('units','pixels')
-	# var[:] = np.flipud(vx_nomask).astype('float32')
-	var[:] = j_bilinear_offset_corr_arr.astype('float32')
-	if not(args.nlf):
-		log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # set dimensions
+    nc_outfile.createDimension('x',out_pixels)
+    nc_outfile.createDimension('y',out_lines)
 
 
-varname='vx'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','x_velocity')
-var.setncattr('long_name','x component of velocity')
-var.setncattr('units',del_t_speedunit_str)
-# var[:] = np.flipud(vx_nomask).astype('float32')
-var[:] = vx_nomask.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # set variables
+    # first set up image_pair_times variable not as a dimension, but as holder for attributes for the times of the two input images, delt, etc.
+    varname='image_pair_times'
+    delt=str(del_t_val) # need to set this as an attribute
+    delt_units=del_t_unit_str
+    delt_speed_units=del_t_speedunit_str
+    datatype=np.dtype('S1')
+    dimensions=()
+    FillValue=None
+    lsd = None
 
-varname='vy'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','y_velocity')
-var.setncattr('long_name','y component of velocity')
-var.setncattr('units',del_t_speedunit_str)
-# var[:] = np.flipud(vy_nomask).astype('float32')
-var[:] = vy_nomask.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    dtstart=img1.imagedatetime
+    start_decimal_year=dtstart.year + (dtstart - dt.datetime(year=dtstart.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtstart.year+1,month=1,day=1)-dt.datetime(year=dtstart.year,month=1,day=1)).total_seconds()
+    dtmid=img1.imagedatetime + dt.timedelta(seconds=((img2.imagedatetime-img1.imagedatetime).total_seconds()/2.0))
+    mid_decimal_year=dtmid.year + (dtmid - dt.datetime(year=dtmid.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtmid.year+1,month=1,day=1)-dt.datetime(year=dtmid.year,month=1,day=1)).total_seconds()
+    dtstop=img2.imagedatetime
+    stop_decimal_year=dtstop.year + (dtstop - dt.datetime(year=dtstop.year,month=1,day=1)).total_seconds()/(dt.datetime(year=dtstop.year+1,month=1,day=1)-dt.datetime(year=dtstop.year,month=1,day=1)).total_seconds()
 
-varname='vv'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','speed')
-var.setncattr('long_name','magnitude of velocity')
-var.setncattr('units',del_t_speedunit_str)
-# var[:] = np.flipud(vv_nomask).astype('float32')
-var[:] = vv_nomask.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+    var.setncattr('del_t',delt)
+    var.setncattr('del_t_units',delt_units)
+    var.setncattr('del_t_speed_units',delt_speed_units)
+    var.setncattr('start_time_decimal_year',str(start_decimal_year))
+    var.setncattr('mid_time_decimal_year',str(mid_decimal_year))
+    var.setncattr('end_time_decimal_year',str(stop_decimal_year))
+    var.setncattr('start_date',dtstart.isoformat())
+    var.setncattr('mid_date',dtmid.isoformat())
+    var.setncattr('end_date',dtstop.isoformat())
 
-varname='vx_masked'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','x_velocity_masked')
-var.setncattr('long_name','x component of velocity (masked)')
-var.setncattr('units',del_t_speedunit_str)
-var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
-# var[:] = np.flipud(vx).astype('float32')
-var[:] = vx.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
 
-varname='vy_masked'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','y_velocity_masked')
-var.setncattr('long_name','y component of velocity (masked)')
-var.setncattr('units',del_t_speedunit_str)
-var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
-# var[:] = np.flipud(vy).astype('float32')
-var[:] = vy.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # next set up input_image_details variable not as a dimension, but as holder for attributes for the times of the two input images, delt, etc.
+    varname='input_image_details'
 
-varname='vv_masked'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=vel_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','speed_masked')
-var.setncattr('long_name','magnitude of velocity (masked)')
-var.setncattr('units',del_t_speedunit_str)
-var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
-# var[:] = np.flipud(vv).astype('float32')
-var[:] = vv.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
-	
-varname='corr'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=corr_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','corr')
-var.setncattr('long_name','peak correlation value')
-var.setncattr('units',' ')
-# var[:] = np.flipud(corr_arr).astype('float32')
-var[:] = corr_arr.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    datatype=np.dtype('S1')
+    dimensions=()
+    FillValue=None
+    lsd = None
 
-varname='del_corr'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=corr_nodata_val
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','del_corr')
-var.setncattr('long_name','delta corr between primary and second peak')
-var.setncattr('units',' ')
-# var[:] = np.flipud(del_corr_arr).astype('float32')
-var[:] = del_corr_arr.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+    var.setncattr('image1_filename',img1.filename)
+    var.setncattr('image1_path',img1.in_dir_abs_path)
+    var.setncattr('image1_pix_x_size',img1.pix_x_m)
+    var.setncattr('image1_pix_y_size',img1.pix_y_m)
+    var.setncattr('image1_proj_WKT',img1.proj)
+    var.setncattr('image1_proj_GeoTransform',img1.gt)
+    var.setncattr('image1_decimal_year',str(start_decimal_year))
 
-# lgo_mask_image_utm - added in v5p2
-if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
-	varname='lgo_mask'
-	print('writing %s'%(varname))
-	datatype=np.dtype('byte')
-	dimensions=('y','x')
-	if lgo_mask_nodata:
-		FillValue=np.byte(lgo_mask_nodata)
-	else:
-		FillValue=np.byte(255)
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-	var.setncattr('grid_mapping',grid_mapping)
-	var.setncattr('standard_name','lgo_mask')
-	var.setncattr('long_name','land(1) glacier(0) ocean(2) mask')
-	var.setncattr('units',' ')
-# 	var[:] = np.flipud(lgo_mask_image_utm).astype('byte')
-	var[:] = lgo_mask_image_utm.astype('byte')
-	if not(args.nlf):
-		log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    var.setncattr('image2_filename',img2.filename)
+    var.setncattr('image2_path',img2.in_dir_abs_path)
+    var.setncattr('image2_pix_x_size',img2.pix_x_m)
+    var.setncattr('image2_pix_y_size',img2.pix_y_m)
+    var.setncattr('image2_proj_WKT',img2.proj)
+    var.setncattr('image2_proj_GeoTransform',img2.gt)
+    var.setncattr('image2_decimal_year',str(stop_decimal_year))
 
-varname='d2idx2'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=curvature_nodata_value
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','d2idx2')
-var.setncattr('long_name','corr peak curvature in x direction')
-var.setncattr('units',' ')
-# var[:] = np.flipud(d2idx2).astype('float32')
-var[:] = d2idx2.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
 
-varname='d2jdx2'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=curvature_nodata_value
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','d2jdx2')
-var.setncattr('long_name','corr peak curvature in y direction')
-var.setncattr('units',' ')
-# var[:] = np.flipud(d2jdx2).astype('float32')
-var[:] = d2jdx2.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    # projection variable is tricky - for all L8 not in Antarctica, it is transverse mercator; for Antarctica, polar stereo
+    if (img1.srs.GetAttrValue('PROJECTION') == 'Polar_Stereographic'):
+        # Antarctic input file - OR this could be a non-landsat PS image from the north and it might work? because of the sign of the pole used below??? maybe...
+        print('antarctic image')
 
-#######################################################
-# commented this out in version 5p8 because it can be calculated directly from d2idx2 and d2jdx2
-#######################################################
+        varname='polar_stereographic'
+        grid_mapping='polar_stereographic'  # need to set this as an attribute for the image variables
+        datatype=np.dtype('S1')
+        dimensions=()
+        FillValue=None
+        lsd = None
+    # 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+        # variable made, now add attributes
+        out_pix_size_x=output_array_pix_x_m
+        out_pix_size_y=output_array_pix_y_m
+        out_geotransform = [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ]
+    
+        var.setncattr('grid_mapping_name','polar_stereographic')
+        var.setncattr('straight_vertical_longitude_from_pole',img1.srs.GetProjParm('central_meridian'))
+        var.setncattr('false_easting',img1.srs.GetProjParm('false_easting'))
+        var.setncattr('false_northing',img1.srs.GetProjParm('false_northing'))
+        var.setncattr('latitude_of_projection_origin',np.sign(img1.srs.GetProjParm('latitude_of_origin'))*90.0)  # could hardcode this to be -90 for landsat - just making it more general, maybe...
+        var.setncattr('standard_parallel',img1.srs.GetProjParm('latitude_of_origin'))
+        var.setncattr('longitude_of_prime_meridian',float(img1.srs.GetAttrValue('GEOGCS|PRIMEM',1)))
+        var.setncattr('semi_major_axis',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',1)))
+        var.setncattr('inverse_flattening',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',2)))
+        var.setncattr('spatial_ref',img1.srs.ExportToWkt())
+        var.setncattr('GeoTransform',' '.join(str(x) for x in out_geotransform))  # note this has pixel size in it - set  explicitly above
+
+    elif (img1.srs.GetAttrValue('PROJECTION') == 'Transverse_Mercator'):
+        # rest of the world for landsat - UTM
+        # make 'transverse_mercator' variable with special gadl netCDF projection attributes
+        varname='transverse_mercator'
+        grid_mapping='transverse_mercator'  # need to set this as an attribute for the image variables
+        datatype=np.dtype('S1')
+        dimensions=()
+        FillValue=None
+        lsd = None
+    # 	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+        # variable made, now add attributes
+        out_pix_size_x=output_array_pix_x_m
+        out_pix_size_y=output_array_pix_y_m
+        out_geotransform = [ output_array_ul_corner[0], output_array_pix_x_m, 0, output_array_ul_corner[1], 0, output_array_pix_y_m ]
+    
+        var.setncattr('grid_mapping_name','transverse_mercator')
+        var.setncattr('longitude_of_central_meridian',img1.srs.GetProjParm('central_meridian'))
+        var.setncattr('false_easting',img1.srs.GetProjParm('false_easting'))
+        var.setncattr('false_northing',img1.srs.GetProjParm('false_northing'))
+        var.setncattr('latitude_of_projection_origin',img1.srs.GetProjParm('latitude_of_origin'))
+        var.setncattr('scale_factor_at_central_meridian',img1.srs.GetProjParm('scale_factor'))
+        var.setncattr('longitude_of_prime_meridian',float(img1.srs.GetAttrValue('GEOGCS|PRIMEM',1)))
+        var.setncattr('semi_major_axis',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',1)))
+        var.setncattr('inverse_flattening',float(img1.srs.GetAttrValue('GEOGCS|SPHEROID',2)))
+        var.setncattr('spatial_ref',img1.srs.ExportToWkt())
+        var.setncattr('GeoTransform',' '.join(str(x) for x in out_geotransform))  # note this has pixel size in it - set  explicitly above
+    else:
+        print('projection %s not recognized for this program'%(img1.srs.GetAttrValue('PROJECTION')))
+        sys.exit(-1)
+
+    x_vals=np.arange((out_geotransform[0] + (out_pix_size_x/2.0)),(out_geotransform[0] + (out_pix_size_x * out_pixels)),out_pix_size_x)
+    # y_vals=np.arange((out_geotransform[3] + (out_pix_size_y/2.0)),(out_geotransform[3] + (out_pix_size_y * out_lines)),out_pix_size_y)[::-1]  # flip the order to increasing
+    y_vals=np.arange((out_geotransform[3] + (out_pix_size_y/2.0)),(out_geotransform[3] + (out_pix_size_y * out_lines)),out_pix_size_y)  # not any more - top down so gdal will be happy
+
+
+    varname='x'
+    datatype=np.dtype('float64')
+    dimensions=('x')
+    FillValue=False
+    lsd = None
+    # var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+    var.setncattr('standard_name','projection_x_coordinate')
+    var.setncattr('long_name','x coordinate of projection')
+    var.setncattr('units','m')
+    var[:] = x_vals
+
+
+    varname='y'
+    datatype=np.dtype('float64')
+    dimensions=('y')
+    FillValue=False
+    lsd = None
+    # var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+    var.setncattr('standard_name','projection_y_coordinate')
+    var.setncattr('long_name','y coordinate of projection')
+    var.setncattr('units','m')
+    var[:] = y_vals
+
+    # set variables
+    # first set up image_pair_times variable not as dimension, but as holder for attributes for the times of the two input images, delt, etc.
+    varname='offset_correction'
+    # delt=str(del_t_val) # need to set this as an attribute
+    # delt_units=del_t_unit_str
+    # delt_speed_units=del_t_speedunit_str
+    datatype=np.dtype('S1')
+    dimensions=()
+    FillValue=None
+    var = nc_outfile.createVariable(varname,datatype, dimensions, fill_value=FillValue)
+    if found_valid_offset and not(found_valid_bilinear_offset):
+        var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
+        var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
+        var.setncattr('final_offset_correction_units','pixels')
+        var.setncattr('final_offset_correction_i',str(final_offset_correction_i))
+        var.setncattr('final_offset_correction_j',str(final_offset_correction_j))
+    elif found_valid_offset and found_valid_bilinear_offset:
+        var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
+        var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
+        var.setncattr('final_offset_correction_units','pixels')
+        var.setncattr('final_offset_correction_i','coefs_i ' + str(coefs_i.ravel()))
+        var.setncattr('final_offset_correction_j','coefs_j ' + str(coefs_j.ravel()))
+    else:
+        var.setncattr('offset_correction_type_applied',offset_correction_type_applied)
+        var.setncattr('offset_correction_type_descritption',offset_correction_type_descritption)
+        var.setncattr('final_offset_correction_units','pixels')
+        var.setncattr('final_offset_correction_i','None')
+        var.setncattr('final_offset_correction_j','None')
+
+    if found_valid_offset and found_valid_bilinear_offset:  # write out bilinear correction arrays so that one can get back to original del_i,del_j if needed
+        varname='applied_bilinear_x_offset_correction_in_pixels'
+        print('writing %s'%(varname))
+        datatype=np.dtype('float32')
+        dimensions=('y','x')
+        FillValue=-99.0
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+        var.setncattr('bilinear_offset_correction_details','%s applied to measured x offset (offset in pixels that was added to original match data - subtract x_pix_size*del_t*this_offset and divide by x_pix_size to get to original x offset in pixels)'%(offset_correction_type_applied))
+        var.setncattr('grid_mapping',grid_mapping)
+        var.setncattr('standard_name','x_offset_pixels')
+        var.setncattr('long_name','x offset correction in pixels')
+        var.setncattr('units','pixels')
+        # var[:] = np.flipud(vx_nomask).astype('float32')
+        var[:] = i_bilinear_offset_corr_arr.astype('float32')
+        if not(args.nlf):
+            log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    
+        varname='applied_bilinear_y_offset_correction_in_pixels'
+        print('writing %s'%(varname))
+        datatype=np.dtype('float32')
+        dimensions=('y','x')
+        FillValue=-99.0
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+        var.setncattr('bilinear_offset_correction_details','%s applied to measured y offset (offset in pixels that was added to original match data - subtract y_pix_size*del_t*this_offset and divide by y_pix_size to get to original y offset in pixels)'%(offset_correction_type_applied))
+        var.setncattr('grid_mapping',grid_mapping)
+        var.setncattr('standard_name','y_offset_pixels')
+        var.setncattr('long_name','y offset correction in pixels')
+        var.setncattr('units','pixels')
+        # var[:] = np.flipud(vx_nomask).astype('float32')
+        var[:] = j_bilinear_offset_corr_arr.astype('float32')
+        if not(args.nlf):
+            log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+
+    varname='vx'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','x_velocity')
+    var.setncattr('long_name','x component of velocity')
+    var.setncattr('units',del_t_speedunit_str)
+    # var[:] = np.flipud(vx_nomask).astype('float32')
+    var[:] = vx_nomask.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='vy'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','y_velocity')
+    var.setncattr('long_name','y component of velocity')
+    var.setncattr('units',del_t_speedunit_str)
+    # var[:] = np.flipud(vy_nomask).astype('float32')
+    var[:] = vy_nomask.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='vv'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','speed')
+    var.setncattr('long_name','magnitude of velocity')
+    var.setncattr('units',del_t_speedunit_str)
+    # var[:] = np.flipud(vv_nomask).astype('float32')
+    var[:] = vv_nomask.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='vx_masked'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','x_velocity_masked')
+    var.setncattr('long_name','x component of velocity (masked)')
+    var.setncattr('units',del_t_speedunit_str)
+    var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
+    # var[:] = np.flipud(vx).astype('float32')
+    var[:] = vx.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='vy_masked'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','y_velocity_masked')
+    var.setncattr('long_name','y component of velocity (masked)')
+    var.setncattr('units',del_t_speedunit_str)
+    var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
+    # var[:] = np.flipud(vy).astype('float32')
+    var[:] = vy.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='vv_masked'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=vel_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','speed_masked')
+    var.setncattr('long_name','magnitude of velocity (masked)')
+    var.setncattr('units',del_t_speedunit_str)
+    var.setncattr('masking_info','masked_where(((del_corr_arr<%4.3f)&(corr_arr<%4.3f))|(corr_arr<%4.3f))'%(dcam,cam,cam1))
+    # var[:] = np.flipud(vv).astype('float32')
+    var[:] = vv.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+    
+    varname='corr'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=corr_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','corr')
+    var.setncattr('long_name','peak correlation value')
+    var.setncattr('units',' ')
+    # var[:] = np.flipud(corr_arr).astype('float32')
+    var[:] = corr_arr.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='del_corr'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=corr_nodata_val
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','del_corr')
+    var.setncattr('long_name','delta corr between primary and second peak')
+    var.setncattr('units',' ')
+    # var[:] = np.flipud(del_corr_arr).astype('float32')
+    var[:] = del_corr_arr.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    # lgo_mask_image_utm - added in v5p2
+    if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
+        varname='lgo_mask'
+        print('writing %s'%(varname))
+        datatype=np.dtype('byte')
+        dimensions=('y','x')
+        if lgo_mask_nodata:
+            FillValue=np.byte(lgo_mask_nodata)
+        else:
+            FillValue=np.byte(255)
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+        var.setncattr('grid_mapping',grid_mapping)
+        var.setncattr('standard_name','lgo_mask')
+        var.setncattr('long_name','land(1) glacier(0) ocean(2) mask')
+        var.setncattr('units',' ')
+    # 	var[:] = np.flipud(lgo_mask_image_utm).astype('byte')
+        var[:] = lgo_mask_image_utm.astype('byte')
+        if not(args.nlf):
+            log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='d2idx2'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=curvature_nodata_value
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','d2idx2')
+    var.setncattr('long_name','corr peak curvature in x direction')
+    var.setncattr('units',' ')
+    # var[:] = np.flipud(d2idx2).astype('float32')
+    var[:] = d2idx2.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='d2jdx2'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=curvature_nodata_value
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','d2jdx2')
+    var.setncattr('long_name','corr peak curvature in y direction')
+    var.setncattr('units',' ')
+    # var[:] = np.flipud(d2jdx2).astype('float32')
+    var[:] = d2jdx2.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    #######################################################
+    # commented this out in version 5p8 because it can be calculated directly from d2idx2 and d2jdx2
+    #######################################################
+    #
+    # varname='d2dx2_mean'
+    # print 'writing %s'%(varname)
+    # datatype=np.dtype('float32')
+    # dimensions=('y','x')
+    # FillValue=curvature_nodata_value
+    # var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    # var.setncattr('grid_mapping',grid_mapping)
+    # var.setncattr('standard_name','d2dx2_mean')
+    # var.setncattr('long_name','mean corr peak curvature')
+    # var.setncattr('units',' ')
+    # # var[:] = np.flipud(d2dx2_mean).astype('float32')
+    # var[:] = d2dx2_mean.astype('float32')
+    # if not(args.nlf):
+    # 	log_output_lines.append('added  %s to netCDF file %d, %d \n'%(varname, out_pixels, out_lines))
+
+    varname='del_i'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=None
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','i_pixel_offset')
+    var.setncattr('long_name','i pixel offset (positive in image right direction, original image pixel size, no offset correction applied)')
+    var.setncattr('units','pixels')
+    # var[:] = np.flipud(vx_nomask).astype('float32')
+    var[:] = del_i.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+    varname='del_j'
+    print('writing %s'%(varname))
+    datatype=np.dtype('float32')
+    dimensions=('y','x')
+    FillValue=None
+    var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
+    var.setncattr('grid_mapping',grid_mapping)
+    var.setncattr('standard_name','j_pixel_offset')
+    var.setncattr('long_name','j pixel offset (positive in image down direction (if pix_y_m is negative), original image pixel size, no offset correction applied)')
+    var.setncattr('units','pixels')
+    # var[:] = np.flipud(vx_nomask).astype('float32')
+    var[:] = del_j.astype('float32')
+    if not(args.nlf):
+        log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
+
+
+    # enter end information into log so it will be in nc file - repeated to screen again at the real end of the program
+    if psutil_available and not(args.nlf):
+        t_log('At end - psutil reports process %s using '%(args.out_name_base) + str(memory_usage_psutil()),outlogdisabled=args.nlf)
+    if resource_available and not(args.nlf):
+        t_log('At end - resource module reports process %s using '%(args.out_name_base) + str(memory_usage_resource()),outlogdisabled=args.nlf)
+    
+    if not(args.nlf):   # add log file output to nc file
+        inlog=''.join(log_output_lines)
+        nc_outfile.createDimension('chars',len(inlog))
+
+        varname='chars'
+        datatype=np.dtype('int32')
+        dimensions=('chars')
+        FillValue=False
+        lsd = None
+        # var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+        var.setncattr('standard_name','character_index')
+        var.setncattr('long_name','character index for log file')
+        var.setncattr('units',' ')
+        var[:] = range(len(inlog))
+
+
+        varname='processing_log'
+        datatype=np.dtype('S1')
+        dimensions=('chars')
+        FillValue=None
+        lsd = None
+        var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
+        var.setncattr('standard_name','sc_pycorr_process_log')
+        var.setncattr('long_name','log from feature tracking processing')
+        for indx,character in enumerate(inlog):
+            var[indx]=character
+
+
+    nc_outfile.sync() # flush data to disk
+    nc_outfile.close()
+###############
 #
-# varname='d2dx2_mean'
-# print 'writing %s'%(varname)
-# datatype=np.dtype('float32')
-# dimensions=('y','x')
-# FillValue=curvature_nodata_value
-# var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-# var.setncattr('grid_mapping',grid_mapping)
-# var.setncattr('standard_name','d2dx2_mean')
-# var.setncattr('long_name','mean corr peak curvature')
-# var.setncattr('units',' ')
-# # var[:] = np.flipud(d2dx2_mean).astype('float32')
-# var[:] = d2dx2_mean.astype('float32')
-# if not(args.nlf):
-# 	log_output_lines.append('added  %s to netCDF file %d, %d \n'%(varname, out_pixels, out_lines))
-
-varname='del_i'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=None
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','i_pixel_offset')
-var.setncattr('long_name','i pixel offset (positive in image right direction, original image pixel size, no offset correction applied)')
-var.setncattr('units','pixels')
-# var[:] = np.flipud(vx_nomask).astype('float32')
-var[:] = del_i.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
-
-varname='del_j'
-print('writing %s'%(varname))
-datatype=np.dtype('float32')
-dimensions=('y','x')
-FillValue=None
-var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, zlib=True, complevel=2, shuffle=True)
-var.setncattr('grid_mapping',grid_mapping)
-var.setncattr('standard_name','j_pixel_offset')
-var.setncattr('long_name','j pixel offset (positive in image down direction (if pix_y_m is negative), original image pixel size, no offset correction applied)')
-var.setncattr('units','pixels')
-# var[:] = np.flipud(vx_nomask).astype('float32')
-var[:] = del_j.astype('float32')
-if not(args.nlf):
-	log_output_lines.append('added  %s to netCDF file %d, %d '%(varname, out_pixels, out_lines))
-
-
-# enter end information into log so it will be in nc file - repeated to screen again at the real end of the program
-if psutil_available and not(args.nlf):
-	t_log('At end - psutil reports process %s using '%(args.out_name_base) + str(memory_usage_psutil()),outlogdisabled=args.nlf)
-if resource_available and not(args.nlf):
-	t_log('At end - resource module reports process %s using '%(args.out_name_base) + str(memory_usage_resource()),outlogdisabled=args.nlf)
-	
-if not(args.nlf):   # add log file output to nc file
-	inlog=''.join(log_output_lines)
-	nc_outfile.createDimension('chars',len(inlog))
-
-	varname='chars'
-	datatype=np.dtype('int32')
-	dimensions=('chars')
-	FillValue=False
-	lsd = None
-	# var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue, least_significant_digit=lsd,zlib=zlib,complevel=complevel,shuffle=shuffle,fletcher32=fletcher32)
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-	var.setncattr('standard_name','character_index')
-	var.setncattr('long_name','character index for log file')
-	var.setncattr('units',' ')
-	var[:] = range(len(inlog))
-
-
-	varname='processing_log'
-	datatype=np.dtype('S1')
-	dimensions=('chars')
-	FillValue=None
-	lsd = None
-	var = nc_outfile.createVariable(varname,datatype,dimensions, fill_value=FillValue)
-	var.setncattr('standard_name','sc_pycorr_process_log')
-	var.setncattr('long_name','log from feature tracking processing')
-	for indx,character in enumerate(inlog):
-		var[indx]=character
-
-
-nc_outfile.sync() # flush data to disk
-nc_outfile.close()
-
+# end output netCDF4
+#
+###############
 
 
 if psutil_available:
