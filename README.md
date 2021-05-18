@@ -8,7 +8,7 @@
 
 ---
 ## why pycorr?
-pycorr is a "relatively" light weight python script that exploits [GDAL](https://gdal.org) and [openCV](https://opencv.org) to rapidly determine offsets in an image pair. Because it uses GDAL for image I/O, it can use image pairs in many geospatial formats, with the caveat that the images do overlap some spatially and that their image pixels have the same size. pycorr produces a netCDF4 file with offsets and correlation values at a user-specified grid resolution in the same projection as the original images.
+pycorr is a "relatively" light weight python script that exploits [GDAL](https://gdal.org) and [openCV](https://opencv.org) to rapidly determine offsets in an image pair. Because it uses GDAL for image I/O, it can use image pairs in many geospatial formats, with the caveat that the images do overlap some spatially and that their image pixels have the same size. pycorr produces a netCDF4 file with offsets and correlation values at a user-specified grid resolution in the same projection as the original images **if** the input images are in a UTM or Antarctic Polar Stereo (epsg:3031) projection - this is the set of projections used for Landsat imagery.  If your images are in a a different projection, you are not out of luck - use the `-output_geotiffs_instead_of_netCDF` option to output in the same projection as the input images - this option allows any projection GDAL knows about, which is most.  The issue here is that the netCDF4 cf geolocation spec requires a variable block in the output file that is named after the projection, making it difficult to support all projections in a simple way.
 
 There are a number of packages that provide similar analyses and may have more sophisticated approaches to identifying and filtering "noisy" matches, which can be due to cloud cover, surface change, low contrast features or an absence of features, shadows, and low signal-to-noise input imagery.  pycorr is intentionally simple - it does not use a series of larger chip sizes if the initial match fails to find a peak at a location; it returns a limited set of metrics that help document the uniqueness and strength of a peak that can be used to filter the output, but it does not attempt to provide an error estimate for each match.
 
@@ -124,7 +124,89 @@ A typical Landsat or Sentinel 2 satellite image has a geolocation accuracy that 
 A second common source of error is internal distortion in the satellite imagery because of limited accuracy in the surface elevation model used by the image provider to geolocate the pixels in the image. While many optical imagers take images from a near-nadir viewpoint, the width of the image swath is large enough that pixels near the edge of the swath are viewed from an angle off nadir - meaning that any error in an elevation model used to map those pixels to the surface of the Earth will mis-locate them relative to pixels in the image center.  If the ground location in question is to the right of the satellite on one pass, and to the left on an adjacent pass, then the topographic error will produce offsets in opposite directions. This parallax is the signal that is used to map topography from stereo imagery, but for ice flow mapping it isn't a good thing. It is also the case that topographic errors are much more common over rapidly flowing or rapidly melting ice than over any other land cover type.  There is a simple solution to this problem: **use images from the same orbit track** so that the topographic distortion is essentially the same in both images - this eliminates 95% of the issue.  For Landsat this means using image pairs with the same path and row designations. For Sentinel 2 there is a similar "track" in the metadata, but the easiest approach is to use images separated by multiples of 5 days - so a 5 day S2A x S2B pair, or a 10 day S2A x S2A or S2B x S2B pair (Sentinel 2 A and B are in 10-day repeat orbits, staggered 5 days apart).
 
 
+## the full set of options
+```
+usage: pycorr_iceflow_v1.1.py [-h] [-imgdir IMGDIR] [-img1dir IMG1DIR] [-img2dir IMG2DIR] [-output_dir OUTPUT_DIR] [-img1datestr IMG1DATESTR]
+                              [-img2datestr IMG2DATESTR] [-datestrfmt DATESTRFMT] [-out_name_base OUT_NAME_BASE] [-bbox min_x min_y max_x max_y]
+                              [-plotvmax PLOTVMAX] [-trackvmax TRACKVMAX] [-nodatavmax NODATAVMAX] [-half_source_chip HALF_SOURCE_CHIP]
+                              [-half_target_chip HALF_TARGET_CHIP] [-inc INC] [-gfilt_sigma GFILT_SIGMA] [-dcam DCAM] [-cam CAM] [-cam1 CAM1]
+                              [-lgo_mask_filename LGO_MASK_FILENAME] [-lgo_mask_file_dir LGO_MASK_FILE_DIR] [-use_itslive_land_mask_from_web]
+                              [-VRT_dir VRT_DIR] [-max_allowable_pixel_offset_correction MAX_ALLOWABLE_PIXEL_OFFSET_CORRECTION]
+                              [-do_not_highpass_input_images] [-v] [-mpy] [-log10] [-nlf] [-progupdates] [-output_geotiffs_instead_of_netCDF]
+                              [-offset_correction_lgo_mask] [-lgo_mask_limit_land_offset]
+                              img1_name img2_name
 
+uses image to image correlation to detect offsets in surface features; 
+    				produces map of offsets in units of pixels and velocity in m/day or m/year
+
+positional arguments:
+  img1_name             image 1 filename
+  img2_name             image 2 filename
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -imgdir IMGDIR        single source dir for both images [.]
+  -img1dir IMG1DIR      source dir for image 1 [.]
+  -img2dir IMG2DIR      source dir for image 2 [.]
+  -output_dir OUTPUT_DIR
+                        output dir [.]
+  -img1datestr IMG1DATESTR
+                        date string for image 1 [None - set from L8 filename]
+  -img2datestr IMG2DATESTR
+                        date string for image 2 [None - set from L8 filename]
+  -datestrfmt DATESTRFMT
+                        date string format for img1datestr and img2datestr [None - set from L8 filename] eg. %m/%d/%Y - SEE:
+                        https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior
+  -out_name_base OUT_NAME_BASE
+                        output filename base
+  -bbox min_x min_y max_x max_y
+                        bbox for feature tracking area in projection m - minx miny maxx maxy - defaults to entire common area between images
+  -plotvmax PLOTVMAX    max vel for colormap [15]
+  -trackvmax TRACKVMAX  max vel that can be tracked (half_target_chip will be made larger if necessary, but if speed_ref is slow, that limit will be
+                        used...) [not set]
+  -nodatavmax NODATAVMAX
+                        max vel (m/d) that can be tracked if speedref file is used and has nodata at location (using trackvmax for this for large time
+                        separations impractical - think ocean pixels...) [0.333000]
+  -half_source_chip HALF_SOURCE_CHIP
+                        half size of source (small) chip [10]
+  -half_target_chip HALF_TARGET_CHIP
+                        half size of target (large or search) chip [20]
+  -inc INC              inc(rement) or chip center grid spacing in pixels (must be even integer) [20]
+  -gfilt_sigma GFILT_SIGMA
+                        gaussian filter sigma (standard deviation in pixels for Gaussian kernel) [3.000000]
+  -dcam DCAM            min difference between corr peaks 1 and 2 for mask ( full mask statement: masked_where(((del_corr_arr<dcam)&(corr_arr<cam)) |
+                        (corr_arr<cam1)) ) [0.050000]
+  -cam CAM              corr peak max value for dcam & cam mask (see full mask statement in -dcam help) [1.000000]
+  -cam1 CAM1            corr peak value max for or mask (see full mask statement in -dcam help) [0.000000]
+  -lgo_mask_filename LGO_MASK_FILENAME
+                        file name for land_glacier_ocean mask file (used for lgo-mask-based offset correction) [None]
+  -lgo_mask_file_dir LGO_MASK_FILE_DIR
+                        path to diretory containing land_glacier_ocean mask file (used for lgo-mask-based offset correction) [None]
+  -use_itslive_land_mask_from_web
+                        pull a land mask from itslive.jpl.nasa.gov S3 bucket (will enable offset correction and disable local lgo_mask use) [False if
+                        not raised]
+  -VRT_dir VRT_DIR      path to directory where temporary .vrt files will be stored, then deleted, for access to part of speed_ref or lgo-mask mosaic
+                        [.]
+  -max_allowable_pixel_offset_correction MAX_ALLOWABLE_PIXEL_OFFSET_CORRECTION
+                        if calculated offset correction of any type is larger than this many pixels, it will NOT be applied [3.000000 pixels]
+  -do_not_highpass_input_images
+                        DO NOT highpass input images before correlation - [highpass images before correlation]
+  -v                    verbose - extra diagnostic and image info put in log file [False if not raised]
+  -mpy                  meters per year - [meters per day if not raised]
+  -log10                output second rgba color image that is log10(v) (and second kmz with colorbar in addition to GTiff if requested) - [only linear
+                        color image produced]
+  -nlf                  do not output log entries in nc file that contain command line etc - [output log entries in nc file]
+  -progupdates          do not provide progress updates - [output progress updates]
+  -output_geotiffs_instead_of_netCDF
+                        output GeoTIFFs of vx,vy,vv,del_corr instead of .nc file with layers (supports all GDAL projections, netCDF only supports
+                        UTM,PS) - [no]
+  -offset_correction_lgo_mask
+                        estimate offset from land pixels and make correct output vels with constant vx and vy shifts (requires -lgo_mask_file - [False]
+  -lgo_mask_limit_land_offset
+                        when source chip center is a land pixel, limit search distance (requires -lgo_mask_file - [False]
+
+```
+                        
 
 
 
