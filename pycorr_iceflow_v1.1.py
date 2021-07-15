@@ -993,6 +993,7 @@ if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
     #########################
     # first - open the lgo mask but don't read it in - only want the srs from this file so we know it's projection - will read subregion at output resolution with .vrt
     if args.use_itslive_land_mask_from_web:
+        gdal.SetConfigOption('AWS_NO_SIGN_REQUEST', 'YES')  # testing this out - should allow public access without AWS credentials
         midx = np.mean([img1.min_x,img1.max_x])
         midy = np.mean([img1.min_y,img1.max_y])
         transformer = pyproj.Transformer.from_crs(img1.proj,'EPSG:4326',always_xy=True)
