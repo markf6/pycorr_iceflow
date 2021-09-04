@@ -2,8 +2,17 @@ import numpy as np
 from numpy.polynomial import polynomial    # this is for the bilinear offset correction
 from scipy.interpolate import RectBivariateSpline as RBS
 import cv2
-import gdal
-import gdalconst as gdc  # constants for gdal - e.g. GA_ReadOnly, GA_Update ( http://www.gdal.org )
+
+try:
+    import gdal
+    import gdalconst as gdc  # constants for gdal - e.g. GA_ReadOnly, GA_Update ( http://www.gdal.org )
+    import osr
+    
+except:
+    from osgeo import gdal
+    from osgeo import gdalconst as gdc
+    from osgeo import osr
+
 import os
 import subprocess as sp
 import string
@@ -12,7 +21,7 @@ import sys
 import time
 import datetime as dt
 import argparse
-import osr
+
 from scipy.ndimage.filters import gaussian_filter
 from matplotlib.pyplot import get_cmap
 import netCDF4
