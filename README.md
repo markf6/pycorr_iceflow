@@ -19,10 +19,10 @@ pycorr is computationally fast because of the use of numpy and the openCV librar
 The libraries required to run pycorr can be installed into a local environment with [Anaconda](https://www.anaconda.com/products/individual) pulling from the [conda-forge](https://conda-forge.org) repository:
 ### create environment
 ```
- conda create --name test_pycorr_env -c conda-forge numpy matplotlib gdal=3.1.2 netCDF4 psutil scipy opencv ipython fiona shapely pyproj boto3 git
+ conda create --name test_pycorr_env -c conda-forge numpy matplotlib gdal netCDF4 psutil scipy opencv ipython fiona shapely pyproj boto3 git
 ```
 
-At the time of writing (5/5/2021) the current gdal in conda-forge (3.2.2) did not install python bindings properly - version 3.1.2 was specified here to avoid this issue.
+Deprecated: At the time of first writing (5/5/2021) the current gdal in conda-forge (3.2.2) did not install python bindings properly - version 3.1.2 was specified here to avoid this issue.
 
 ### clone the repository
 ```

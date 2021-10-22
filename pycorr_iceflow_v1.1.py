@@ -34,7 +34,7 @@ from shapely.geometry import Point, Polygon, asShape
 import pyproj # used to find lon,lat from img1 midpoint
 
 def return_its_live_land_mask_URL(lat=None,lon=None):
-    with fiona.open('s3://its-live-data.jpl.nasa.gov/autorift_parameters/v001/autorift_landice_0120m.shp') as its_live_zones:
+    with fiona.open('s3://its-live-data/autorift_parameters/v001/autorift_landice_0120m.shp') as its_live_zones:
         zones=[]
         for feature in its_live_zones:
             zones.append((asShape(feature['geometry']),feature))
