@@ -139,7 +139,7 @@ class GeoImg_noload:
         self.filename = in_filename
         self.in_dir_path = in_dir  #in_dir can be relative...
         self.in_dir_abs_path=os.path.abspath(in_dir)  # get absolute path for later ref if needed
-        self.gd=gdal.Open(self.in_dir_path + os.path.sep + self.filename)
+        self.gd=gdal.Open(self.in_dir_path + '/' + self.filename)
         if not(self.gd):
             print('Error: open of %s failed: gdal_error: %s'%(self.in_dir_path + os.path.sep + self.filename, gdal.GetLastErrorMsg()))
             sys.exit(0)
