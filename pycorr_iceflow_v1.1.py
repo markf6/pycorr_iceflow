@@ -3,6 +3,7 @@ from numpy.polynomial import polynomial    # this is for the bilinear offset cor
 from scipy.interpolate import RectBivariateSpline as RBS
 import cv2
 
+# old environments may have gdal and osr as separate installs - check here (gdc not used now?)
 try:
     import gdal
     import gdalconst as gdc  # constants for gdal - e.g. GA_ReadOnly, GA_Update ( http://www.gdal.org )
@@ -30,14 +31,14 @@ import re
 # this is all for using the its-live land masks that are on S3
 import boto3
 import fiona
-from shapely.geometry import Point, Polygon, asShape
+from shapely.geometry import Point, Polygon, shape
 import pyproj # used to find lon,lat from img1 midpoint
 
 def return_its_live_land_mask_URL(lat=None,lon=None):
     with fiona.open('s3://its-live-data/autorift_parameters/v001/autorift_landice_0120m.shp') as its_live_zones:
         zones=[]
         for feature in its_live_zones:
-            zones.append((asShape(feature['geometry']),feature))
+            zones.append((shape(feature['geometry']),feature))
         pt = Point(lon,lat)
         ptzone = [l for geom,l in zones if geom.contains(pt)] # should only return 1 feature in list
         landmask_tif_url = ptzone[0]['properties']['land']
