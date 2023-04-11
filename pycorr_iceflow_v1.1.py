@@ -456,7 +456,7 @@ parser.add_argument('-nlf',
 parser.add_argument('-progupdates', 
                     action='store_true',
                     default=False, 
-                    help='do not provide progress updates - [output progress updates]')
+                    help='provide progress updates - [do not output progress updates]')
 parser.add_argument('-output_geotiffs_instead_of_netCDF', 
                     action='store_true',
                     default=False, 
