@@ -1288,7 +1288,7 @@ for i in range(min_ind_i,max_ind_i+1):
 # if not(args.npb):
 # 	pbar.finish()
 
-t_log('Done with image to image correlation: ' + np.str(numcorr) + ' correlations of ' + np.str(output_array_num_pix_x*output_array_num_pix_y) + ' possible',outlogdisabled=args.nlf)
+t_log('Done with image to image correlation: ' + str(numcorr) + ' correlations of ' + str(output_array_num_pix_x*output_array_num_pix_y) + ' possible',outlogdisabled=args.nlf)
 
 # done with hp image arrays now - free all pointers that reference them and the memory
 # del chip_src
