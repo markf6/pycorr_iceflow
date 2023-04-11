@@ -1735,7 +1735,7 @@ if args.offset_correction_lgo_mask or args.use_itslive_land_mask_from_web:
 		final_offset_correction_j=lgo_masked_offset_j
 		found_valid_offset=True
 		offset_correction_type_applied='lgo_masked_correction'
-		offset_correction_type_descritption='lgo_masked_correction for land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(np.float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
+		offset_correction_type_descritption='lgo_masked_correction for land pixels, %d valid pixels out of %d possible for scene (%f %%)'%(lgo_masked_num_valid_pix,lgo_masked_num_possible_pix,100.0*(float(lgo_masked_num_valid_pix)/lgo_masked_num_possible_pix))
 	else:
 		offset_correction_type_applied='None'
 		offset_correction_type_descritption='None'
