@@ -23,7 +23,8 @@ import time
 import datetime as dt
 import argparse
 
-from scipy.ndimage.filters import gaussian_filter
+# gaussian_filter from the scipy.ndimage
+from scipy.ndimage import gaussian_filter
 from matplotlib.pyplot import get_cmap
 import netCDF4
 import re
